@@ -15,10 +15,19 @@ plugins/agent-toolkit/     a Claude Code plugin
 plugins/workstation/       a Claude Code plugin
 └── skills/                2 skills — this Arch/KDE machine's own operations
 
-apps/slack-bridge/         a service, not a plugin
-├── src/slackbridge/       drive Claude Code and Codex sessions from a Slack thread
-└── tests/                 68 unit + 10 e2e
+apps/                      services and CLIs, sharing `opscore`
+├── opscore/               errors, output, secrets, env, guard, http, sql guard
+├── slack-bridge/          drive Claude Code and Codex sessions from a Slack thread
+├── cloudprobe/            GKE + Cloudflare forensics, and a deploy watcher
+└── gpull/                 read-only Gmail attachments and Drive/Sheets exports
 ```
+
+| Package | Tests |
+|---|---|
+| `plugins/agent-toolkit` | 39 |
+| `apps/slack-bridge` | 68 unit + 10 e2e |
+| `apps/cloudprobe` | 72 |
+| `apps/gpull` | 10 |
 
 ---
 
@@ -80,6 +89,20 @@ is read back wherever a backend can be read back. Non-ASCII goes through the raw
 UTF-8 targets rather than the convenience API, which eats accents.
 
 ---
+
+## The services
+
+Three CLIs under `apps/`, sharing `opscore` — one error taxonomy, one JSON
+envelope, one write guard, written once instead of three times.
+
+**[`cloudprobe`](apps/cloudprobe)** — read-only forensics for a GKE + Cloudflare
+deployment: probe failures, logs, metrics, edge requests, the topology diagram,
+and a watcher that answers *did the thing I just shipped make anything worse*.
+Nothing has a default cluster or zone, on purpose: a wrong cluster does not
+produce an error, it produces an answer.
+
+**[`gpull`](apps/gpull)** — the two Google things the APIs make awkward:
+exporting a private Sheet and downloading a Gmail attachment's bytes.
 
 ## The Slack bridge
 
