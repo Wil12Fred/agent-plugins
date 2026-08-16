@@ -7,7 +7,7 @@ environment once and everything downstream — typed reads, `os.environ`, child
 processes — sees the same values.
 
 **Real environment variables always win.** The file only fills in what is
-missing, so `SLACK_CHANNEL_ID=... slackbridge serve` overrides the file without
+missing, so `LOG_LEVEL=debug yourtool run` overrides the file without
 editing it, which is what you want when testing against a second workspace.
 """
 
@@ -39,12 +39,12 @@ def project_root(start: Path | None = None) -> Path:
 def load_env_file(path: Path | None = None) -> int:
     """Export a `.env` into the process environment. Returns how many were set.
 
-    Looks at `SLACKBRIDGE_ENV_FILE` first, then the project root's `.env`. A
+    Looks at `OPSCORE_ENV_FILE` first, then the project root's `.env`. A
     missing file is not an error — the bridge is perfectly usable with the
     variables exported some other way, and refusing to start without a file
     would break every containerised deployment.
     """
-    override = os.environ.get("SLACKBRIDGE_ENV_FILE")
+    override = os.environ.get("OPSCORE_ENV_FILE")
     env_file = path or (Path(override) if override else project_root() / ENV_FILENAME)
     if not env_file.is_file():
         return 0

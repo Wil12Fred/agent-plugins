@@ -1,0 +1,5 @@
+[tool.uv.workspace]
+# `plugins/agent-toolkit` is deliberately NOT a member: a Claude Code plugin is
+# installed by copying its directory, so it has to carry its own dependencies.
+# The apps are services and share `opscore`.
+members = ["apps/*"]

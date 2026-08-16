@@ -9,7 +9,7 @@ encoded and this module keeps:
   bot token first and then the user token. That is why both are resolved here.
 
 This is destructive and irreversible. Nothing deletes unless the caller passes an
-explicit confirmation through :func:`slackbridge.core.guard.check_write`.
+explicit confirmation through :func:`opscore.guard.check_write`.
 """
 
 from __future__ import annotations

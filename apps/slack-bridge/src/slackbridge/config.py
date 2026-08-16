@@ -1,8 +1,8 @@
 """Configuration for the Slack <-> Claude/Codex bridge.
 
 Everything here comes from the environment (the repo ``.env`` is exported once by
-:func:`slackbridge.core.settings.load_env_file`). Tokens are resolved through
-:mod:`slackbridge.core.secrets` and are **never** printed — :func:`slackbridge.core.secrets.redact`
+:func:`opscore.settings.load_env_file`). Tokens are resolved through
+:mod:`opscore.secrets` and are **never** printed — :func:`opscore.secrets.redact`
 is the only way a token may reach a human.
 
 Two token identities exist and they are not interchangeable:
@@ -33,9 +33,9 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
-from slackbridge.core.env import load_env_file
-from slackbridge.core.errors import ConfigError
-from slackbridge.core.secrets import resolve
+from opscore.env import load_env_file
+from opscore.errors import ConfigError
+from opscore.secrets import resolve
 
 
 def keyring_user_token() -> tuple[str, str]:

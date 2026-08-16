@@ -14,8 +14,8 @@ import os
 import shutil
 import subprocess
 
-from slackbridge.core.errors import ConfigError
-from slackbridge.core.output import get_output
+from opscore.errors import ConfigError
+from opscore.output import get_output
 
 # A redaction that shows four leading and four trailing characters gives away
 # eight of a nine-character secret. Nothing is revealed below the first
@@ -56,7 +56,7 @@ def _ensure_dotenv_loaded() -> None:
     if _DOTENV_LOADED:
         return
     try:
-        from slackbridge.core.env import load_env_file
+        from opscore.env import load_env_file
 
         load_env_file()
     except OSError as exc:

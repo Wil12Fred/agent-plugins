@@ -24,8 +24,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import StrEnum
 
-from slackbridge.core.errors import GuardError
-from slackbridge.core.output import get_output
+from opscore.errors import GuardError
+from opscore.output import get_output
 
 
 class Consequence(StrEnum):

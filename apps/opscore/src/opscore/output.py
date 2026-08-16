@@ -25,7 +25,7 @@ from typing import Any
 from rich.console import Console
 from rich.table import Table
 
-from slackbridge.core.errors import BridgeError
+from opscore.errors import BridgeError
 
 
 @dataclass
@@ -39,7 +39,7 @@ class Output:
     """Returns the full command path, known only once the subcommand is bound.
 
     The root callback runs *before* Click resolves the leaf, so ``command`` set
-    there is only the group (``"sessions"`` for ``slackbridge sessions list``) — two different
+    there is only the group (``"logs"`` for ``yourtool logs read``) — two different
     commands then produce indistinguishable envelopes. The CLI injects a
     resolver that reads the live Click context at emit time instead.
     """
@@ -166,7 +166,7 @@ class Output:
 
 
 _current: contextvars.ContextVar[Output | None] = contextvars.ContextVar(
-    "slackbridge_output", default=None
+    "opscore_output", default=None
 )
 
 
