@@ -152,9 +152,7 @@ def clipboard_copy(
         int,
         typer.Option("--hold-seconds", help="X11 fallback only: release after N seconds."),
     ] = 30,
-    backend: Annotated[
-        str, typer.Option("--backend", help="auto | klipper | x11.")
-    ] = "auto",
+    backend: Annotated[str, typer.Option("--backend", help="auto | klipper | x11.")] = "auto",
     display: Annotated[
         str | None, typer.Option("--display", help="X display to own. Defaults to $DISPLAY.")
     ] = None,
@@ -227,3 +225,109 @@ def main() -> None:
 
 if __name__ == "__main__":  # pragma: no cover
     main()
+
+
+android_app = typer.Typer(
+    name="android", help="Drive an Android app on an emulator, over adb.", no_args_is_help=True
+)
+app.add_typer(android_app, name="android")
+
+
+def _emulator(serial: str) -> Any:
+    from agentctl.android import Emulator
+
+    return Emulator(serial=serial)
+
+
+SerialOption = Annotated[str, typer.Option("--serial", help="adb serial of the target.")]
+
+
+@android_app.command("boot")
+def android_boot(
+    avd: Annotated[str, typer.Option("--avd", help="AVD to boot. Defaults to $ANDROID_AVD.")] = "",
+    serial: SerialOption = "emulator-5554",
+    timeout: Annotated[int, typer.Option("--timeout", help="Seconds to wait for boot.")] = 240,
+) -> None:
+    """Boot a headless emulator and wait until it is actually usable.
+
+    Headless, no snapshot, software GPU — the combination that boots reliably
+    with no display attached. It waits for `sys.boot_completed` rather than for
+    the process to exist: an emulator answers adb long before it can be tapped,
+    and every command issued in that gap fails in a way that looks like the app.
+    """
+    from agentctl.android import DEFAULT_AVD
+
+    pid = _emulator(serial).boot(avd or DEFAULT_AVD, timeout=timeout)
+    typer.echo(f"booted (pid {pid})")
+
+
+@android_app.command("shot")
+def android_shot(
+    out: Annotated[Path, typer.Argument(help="Where to write the PNG.")],
+    serial: SerialOption = "emulator-5554",
+) -> None:
+    """Screenshot the device.
+
+    **The PNG shows every unmasked field in clear.** Anything typed is never
+    echoed by this tool, but a screenshot taken right after typing is not
+    redacted — do not paste one into a ticket without looking at it first.
+    """
+    typer.echo(str(_emulator(serial).screenshot(out)))
+
+
+@android_app.command("tap")
+def android_tap(
+    x: Annotated[int, typer.Argument(help="X, in AVD-native coordinates.")],
+    y: Annotated[int, typer.Argument(help="Y, in AVD-native coordinates.")],
+    shown_width: Annotated[
+        int, typer.Option("--shown-width", help="Width the screenshot was rendered at.")
+    ] = 0,
+    shown_height: Annotated[int, typer.Option("--shown-height", help="Rendered height.")] = 0,
+    serial: SerialOption = "emulator-5554",
+) -> None:
+    """Tap a point. Pass `--shown-*` when reading a downscaled screenshot.
+
+    Coordinates are AVD-native. Reading them off a screenshot a tool rendered
+    smaller and tapping as-is misses every target by the same ratio, which looks
+    like the app ignoring you rather than like arithmetic.
+    """
+    from agentctl.android import scale_point
+
+    if shown_width and shown_height:
+        x, y = scale_point(x, y, shown=(shown_width, shown_height))
+    _emulator(serial).tap(x, y)
+    typer.echo(f"tapped {x},{y}")
+
+
+@android_app.command("text")
+def android_text(
+    value: Annotated[str, typer.Argument(help="Text to type into the focused field.")],
+    serial: SerialOption = "emulator-5554",
+) -> None:
+    """Type into the focused field. The value is never echoed.
+
+    Spaces and shell metacharacters are escaped for the *device's* shell, which
+    would otherwise eat them — that corrupted a password once, and the app
+    answered "wrong credentials", which is indistinguishable from a real one.
+    """
+    _emulator(serial).type_text(value)
+    typer.echo(f"typed {len(value)} characters")
+
+
+@android_app.command("logcat")
+def android_logcat(
+    grep: Annotated[str | None, typer.Option("--grep", help="Only lines containing this.")] = None,
+    tail: Annotated[int, typer.Option("--tail", help="How many lines.")] = 200,
+    serial: SerialOption = "emulator-5554",
+) -> None:
+    """Dump the device log."""
+    typer.echo(_emulator(serial).logcat(grep=grep, tail=tail))
+
+
+@android_app.command("install")
+def android_install(
+    apk: Annotated[Path, typer.Argument(help="APK to install.")],
+    serial: SerialOption = "emulator-5554",
+) -> None:
+    """Install an APK, replacing any existing copy."""
+    typer.echo(_emulator(serial).install(apk))

@@ -1,11 +1,18 @@
 {
   "name": "agent-toolkit",
   "displayName": "Agent toolkit",
-  "description": "How to make an agent's claims checkable: fourteen ways a check passes while proving nothing, how to author skills and subagents, how to vet third-party tooling without installing it, and how to keep a claim about a moving system honest. No project-specific knowledge.",
+  "description": "Making an agent's claims checkable, and the utilities that keep coming up: fourteen ways a check proves nothing, authoring skills and subagents, vetting third-party tooling, a verified-state contract, the debt ratchet \u2014 plus the `agentctl` CLI and its read-only MCP server. No project knowledge.",
   "version": "0.1.0",
   "author": {
     "name": "Wilber Cutire"
   },
   "license": "MIT",
-  "keywords": ["verification", "subagents", "skills", "technical-debt", "code-review", "mcp"]
+  "keywords": [
+    "verification",
+    "subagents",
+    "skills",
+    "technical-debt",
+    "android",
+    "mcp"
+  ]
 }

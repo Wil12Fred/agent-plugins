@@ -10,7 +10,7 @@ plugins/agent-toolkit/     a Claude Code plugin
 ├── src/agentctl/          the CLI and the MCP server
 ├── skills/                5 skills — SKILL.md, so Claude Code, Codex, Gemini and Cursor all read them
 ├── agents/                2 subagents — Claude Code only
-└── tests/                 39 tests
+└── tests/                 57 tests
 
 plugins/workstation/       a Claude Code plugin
 └── skills/                2 skills — this Arch/KDE machine's own operations
@@ -42,15 +42,20 @@ uvx --from plugins/agent-toolkit agentctl --help
 | `agentctl detect [path]` | which practices this repository has adopted, each with the paths that prove it |
 | `agentctl strays [path]` | which executables sit outside the code directory, and which are declared exceptions rather than nobody's decision. Exits 7 when anything is undeclared |
 | `agentctl clipboard copy` | put text on the clipboard **and verify it landed** |
-| `agentctl mcp` | serve the above as MCP tools over stdio |
+| `agentctl android …` | boot a headless emulator, screenshot it, tap, type, read logcat, install an APK |
+| `agentctl mcp` | serve `detect` and `strays` as MCP tools over stdio |
 
 Every command takes `--json` and answers with exactly one envelope, so a script
 gets structured output and a meaningful exit code from the same binary a person
 reads.
 
-**Nothing here writes.** There is no `--force`, no `--apply`, and no
-`--allow-writes` for the MCP server to grant — a stronger property than a
-guarded write, and a cheaper one to verify.
+**The MCP server is read-only, and only two commands are on it.** `detect` and
+`strays` read a repository and nothing else, so there is no `--allow-writes` to
+grant — a stronger property than a guarded write and a cheaper one to verify.
+`android tap` and `android text` obviously *do* act on a device, which is why
+they are CLI-only: an agent that can type into a phone is a different trust
+decision from one that can read a directory, and it should be made on purpose
+rather than inherited.
 
 ### Why `detect` exists
 
@@ -74,6 +79,28 @@ code roots: .
 
 3 adopted, 3 not applicable
 ```
+
+### Why `android` is here
+
+It is the one part of a mobile toolchain that is not about any particular app:
+boot an emulator, look at a screenshot, tap, type, read the log. It came from a
+repository where it drove one company's Flutter app; what was portable was the
+adb layer, and what was not — the login flow, the coordinate map of specific
+screens — stayed behind.
+
+Three things it handles that silently corrupt a run otherwise:
+
+- **coordinates are AVD-native**, so a tap read off a screenshot rendered
+  smaller misses every target by the same ratio, which looks like the app
+  ignoring you;
+- **`adb shell input text` runs through the *device's* shell**, which eats
+  `$ & ( ) ; ' "`. That corrupted a password once and the app answered "wrong
+  credentials", indistinguishable from actually having the wrong one;
+- **the soft keyboard shifts the layout**, so the tap after a type lands
+  somewhere else unless the keyboard is hidden first.
+
+Nothing is guessed: no default AVD, no default package filter, no default
+project. Each refuses and names the variable.
 
 ### Why `clipboard copy` is not one line of shell
 
@@ -199,7 +226,7 @@ rather than a dependency: the Klipper path needs nothing at all.
 Each package is independent — its own `pyproject.toml`, its own tests.
 
 ```bash
-cd plugins/agent-toolkit && uv sync --all-extras && uv run pytest   # 39 tests
+cd plugins/agent-toolkit && uv sync --all-extras && uv run pytest   # 57 tests
 cd apps/slack-bridge     && uv sync                && uv run pytest   # 68 tests
 ```
 
