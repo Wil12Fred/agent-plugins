@@ -1,8 +1,9 @@
 # agent-plugins
 
-Tooling for coding agents: a **CLI**, an **MCP server**, five **skills** and two
-**subagents**. Everything here is project-agnostic — no company, no product, no
-host names, no ticket numbers.
+Tooling for coding agents: a **CLI**, an **MCP server**, five **skills**, two
+**subagents**, and a **Slack bridge** that lets you drive Claude Code and Codex
+sessions from a phone. Everything here is project-agnostic — no company, no
+product, no host names, no ticket numbers.
 
 ```
 plugins/agent-toolkit/     a Claude Code plugin
@@ -74,8 +75,6 @@ So the backend is chosen by what is actually running — KDE's Klipper first,
 because it takes ownership itself and keeps the entry in history — and the write
 is read back wherever a backend can be read back. Non-ASCII goes through the raw
 UTF-8 targets rather than the convenience API, which eats accents.
-
----
 
 ---
 
@@ -156,13 +155,14 @@ rather than a dependency: the Klipper path needs nothing at all.
 
 ## Development
 
+Each package is independent — its own `pyproject.toml`, its own tests.
+
 ```bash
-cd plugins/agent-toolkit
-uv sync --all-extras
-uv run pytest        # 39 tests
-uv run ruff check src tests
-uv run mypy src      # strict
+cd plugins/agent-toolkit && uv sync --all-extras && uv run pytest   # 39 tests
+cd apps/slack-bridge     && uv sync                && uv run pytest   # 55 tests
 ```
+
+Both are `ruff check` and `mypy --strict` clean.
 
 ## The idea behind all of it
 
