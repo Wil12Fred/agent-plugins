@@ -12,12 +12,17 @@ uvx --from apps/slack-bridge slackbridge serve --confirm-prod-write
 | Command | |
 |---|---|
 | `slackbridge serve` | the long-running Socket Mode listener |
-| `slackbridge health` | is the Claude CLI answering, is Codex installed, how many sessions are live |
+| `slackbridge health` | is the Claude CLI answering, is Codex installed, how many sessions are live, and is every required program present |
 | `slackbridge check` | build the Bolt app offline and report the resolved configuration, without a network call |
 | `slackbridge sessions …` | list, dispatch to, stop and close sessions from the terminal |
 | `slackbridge service-unit` | print a `systemd --user` unit with **this machine's** real paths |
 
 ## Configuration
+
+Every command takes a global `--json` (before the subcommand:
+`slackbridge --json health`) and answers with exactly one envelope, so a script
+gets structured output and a meaningful exit code from the same binary a person
+reads.
 
 Everything comes from the environment, or from a `.env` the CLI loads at
 startup. Real environment variables always win, so
@@ -105,10 +110,22 @@ else's starts and then cannot find either agent binary.
 ```bash
 cd apps/slack-bridge
 uv sync
-uv run pytest        # 68 tests
+uv run pytest                    # 68 unit tests, offline
+uv run pytest -m integration     # 10 e2e against this machine
 uv run ruff check src tests
-uv run mypy src      # strict
+uv run mypy src                  # strict
 ```
+
+The e2e are opt-in because they depend on the machine: they run the installed
+binary the way systemd would, read the real agent state, and drive a genuinely
+stripped `PATH` to prove the refusal. A missing token or binary **skips with a
+reason** rather than failing — a red that only means "not configured here"
+teaches people to ignore red.
+
+They exist because the bridge shipped with 55 unit tests and not one that
+touched a real binary: every green run proved the parsing and said nothing about
+whether the thing could start. The first run found that `--json` did not exist at
+all.
 
 ## Provenance
 

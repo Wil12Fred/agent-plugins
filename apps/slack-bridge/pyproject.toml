@@ -42,3 +42,7 @@ ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# The default run is offline and fast. `integration` touches the real machine —
+# real binaries, real tokens, real session state — so it is opt-in.
+addopts = "-m 'not integration'"
+markers = ["integration: exercises the real machine; run with -m integration"]
