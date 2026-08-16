@@ -30,16 +30,16 @@ from pathlib import Path
 from typing import Annotated
 
 import typer
-
-from slackbridge import channel as channel_mod
-from slackbridge import claude, codex, config, requirements, sessions
-from slackbridge.api import SlackAPI
-from slackbridge.blocks import result_blocks
 from opscore.env import project_root
 from opscore.errors import ConfigError, NotFoundError, ValidationError
 from opscore.guard import Consequence, WriteIntent, check_write
 from opscore.output import get_output
 from opscore.secrets import redact
+
+from slackbridge import channel as channel_mod
+from slackbridge import claude, codex, config, requirements, sessions
+from slackbridge.api import SlackAPI
+from slackbridge.blocks import result_blocks
 from slackbridge.replies import read_thread, resolve_instruction
 
 app = typer.Typer(
@@ -73,6 +73,7 @@ def _root(
     from opscore.output import Output, set_output
 
     set_output(Output(json_mode=json_mode, quiet=quiet))
+
 
 sessions_app = typer.Typer(
     name="sessions",
@@ -527,9 +528,7 @@ def serve(
     results = requirements.check()
     if blocked := requirements.blocking(results):
         raise ConfigError(
-            "cannot start: "
-            + ", ".join(r.requirement.name for r in blocked)
-            + " not installed",
+            "cannot start: " + ", ".join(r.requirement.name for r in blocked) + " not installed",
             detail="\n" + requirements.explain(results),
         )
     for result in requirements.missing(results):
