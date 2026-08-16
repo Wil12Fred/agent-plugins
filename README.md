@@ -14,7 +14,7 @@ plugins/agent-toolkit/     a Claude Code plugin
 
 apps/slack-bridge/         a service, not a plugin
 ├── src/slackbridge/       drive Claude Code and Codex sessions from a Slack thread
-└── tests/                 55 tests
+└── tests/                 68 tests
 ```
 
 ---
@@ -159,7 +159,7 @@ Each package is independent — its own `pyproject.toml`, its own tests.
 
 ```bash
 cd plugins/agent-toolkit && uv sync --all-extras && uv run pytest   # 39 tests
-cd apps/slack-bridge     && uv sync                && uv run pytest   # 55 tests
+cd apps/slack-bridge     && uv sync                && uv run pytest   # 68 tests
 ```
 
 Both are `ruff check` and `mypy --strict` clean.
