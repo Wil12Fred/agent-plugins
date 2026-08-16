@@ -136,6 +136,70 @@ def strays_command(
         raise typer.Exit(EXIT_FINDINGS)
 
 
+clip_app = typer.Typer(
+    name="clipboard", help="Put text on this machine's clipboard.", no_args_is_help=True
+)
+app.add_typer(clip_app, name="clipboard")
+
+
+@clip_app.command("copy")
+def clipboard_copy(
+    text: Annotated[str | None, typer.Argument(help="Text to copy. Omit to read stdin.")] = None,
+    file: Annotated[
+        Path | None, typer.Option("--file", help="Read the text from this file instead.")
+    ] = None,
+    hold_seconds: Annotated[
+        int,
+        typer.Option("--hold-seconds", help="X11 fallback only: release after N seconds."),
+    ] = 30,
+    backend: Annotated[
+        str, typer.Option("--backend", help="auto | klipper | x11.")
+    ] = "auto",
+    display: Annotated[
+        str | None, typer.Option("--display", help="X display to own. Defaults to $DISPLAY.")
+    ] = None,
+    as_json: Annotated[bool, typer.Option("--json", help="Emit the JSON envelope.")] = False,
+) -> None:
+    """Copy text to the clipboard, and verify it landed.
+
+    Handing a value to a human through the clipboard is the one operation where
+    "the command exited 0" is worthless evidence. On X11 a selection lives only
+    while the owning process does, so setting it and exiting leaves the
+    clipboard **empty** — and the failure is invisible until somebody pastes.
+    It has happened: an SSH key handed over this way arrived as a blank entry.
+
+    So the backend is chosen by what is actually running, KDE's Klipper first
+    because it takes ownership itself and keeps the entry in history, and the
+    write is read back wherever a backend can be read back.
+
+    Non-ASCII is written through the raw UTF-8 targets rather than the
+    convenience API, which mangles accents — the difference between "Aquí está"
+    and "Aqu est".
+    """
+    from agentctl import clipboard as clipboard_module
+
+    if file is not None:
+        payload = file.read_text(encoding="utf-8")
+    elif text is not None:
+        payload = text
+    else:
+        payload = sys.stdin.read()
+    if not payload:
+        raise typer.BadParameter("nothing to copy")
+
+    chosen = clipboard_module.copy(
+        payload,
+        backend=clipboard_module.Backend(backend),
+        hold_seconds=hold_seconds,
+        display=display,
+    )
+    _emit(
+        {"characters": len(payload), "backend": str(chosen)},
+        as_json=as_json,
+        human=f"copied {len(payload)} characters via {chosen}",
+    )
+
+
 @app.command("mcp")
 def mcp_command(
     path: Annotated[
