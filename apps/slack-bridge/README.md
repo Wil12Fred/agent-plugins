@@ -105,7 +105,7 @@ else's starts and then cannot find either agent binary.
 ```bash
 cd apps/slack-bridge
 uv sync
-uv run pytest        # 55 tests
+uv run pytest        # 68 tests
 uv run ruff check src tests
 uv run mypy src      # strict
 ```
