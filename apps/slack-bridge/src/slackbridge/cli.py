@@ -32,11 +32,11 @@ from typing import Annotated
 import typer
 
 from slackbridge import channel as channel_mod
-from slackbridge import claude, codex, config, sessions
+from slackbridge import claude, codex, config, requirements, sessions
 from slackbridge.api import SlackAPI
 from slackbridge.blocks import result_blocks
 from slackbridge.core.env import project_root
-from slackbridge.core.errors import NotFoundError, ValidationError
+from slackbridge.core.errors import ConfigError, NotFoundError, ValidationError
 from slackbridge.core.guard import Consequence, WriteIntent, check_write
 from slackbridge.core.output import get_output
 from slackbridge.core.secrets import redact
@@ -430,8 +430,15 @@ def health() -> None:
 
     A ``claude_ok`` of false is what a post-suspend logout looks like — the watchdog alerts
     the channel on exactly this flip.
+
+    Also reports the external programs the bridge shells out to, so "why did my
+    reply do nothing" has an answer before you go looking in the logs.
     """
-    get_output().result(sessions.health())
+    results = requirements.check()
+    payload = dict(sessions.health())
+    payload["requirements"] = [r.as_dict() for r in results]
+    payload["can_start"] = not requirements.blocking(results)
+    get_output().result(payload)
 
 
 @app.command("check")
@@ -480,9 +487,30 @@ def serve(
     ``--dry-run`` builds the app and stops before connecting (same check as
     ``slackbridge check``). Install it as a ``systemd --user`` unit;
     ``slackbridge service-unit`` prints the unit.
+
+    **It refuses to start when a required program is missing.** The bridge shells
+    out, and before this check it found that out one message at a time: connected,
+    reported healthy, then failed on the first dispatch because ``tmux`` was not
+    installed — indistinguishable, from Slack, from the agent ignoring you.
+    Missing *optional* programs do not block; they are announced, because a
+    reduced capability nobody was told about is the same failure one level down.
     """
     from slackbridge.bolt_app import build_app
     from slackbridge.bolt_app import serve as run_serve
+
+    results = requirements.check()
+    if blocked := requirements.blocking(results):
+        raise ConfigError(
+            "cannot start: "
+            + ", ".join(r.requirement.name for r in blocked)
+            + " not installed",
+            detail="\n" + requirements.explain(results),
+        )
+    for result in requirements.missing(results):
+        get_output().warn(
+            f"{result.requirement.name} is not installed — {result.requirement.purpose}. "
+            f"Install: {result.requirement.install}"
+        )
 
     cfg = config.load()
     intent = WriteIntent(
@@ -564,16 +592,27 @@ WantedBy=default.target
 
 
 def main() -> None:
-    """Entry point. Loads the `.env` before Typer parses anything.
+    """Entry point. Loads the `.env`, then renders our own errors as messages.
 
-    The order matters: several options default from the environment, so a
-    `.env` read after parsing would be read too late to change them.
+    The `.env` comes first because several options default from the
+    environment, so reading it after parsing would be too late to change them.
+
+    The exception handler is the other half, and it is not cosmetic. Without it
+    a missing `tmux` — or a missing channel id — reaches the terminal as a
+    syntax-highlighted traceback pointing at `cli.py`, which reads as *this tool
+    is broken* rather than *you need to install something*. Our own errors carry
+    the message, the fix and an exit code; anything else is a real bug and keeps
+    its traceback.
     """
     from slackbridge.core.env import load_env_file
+    from slackbridge.core.errors import BridgeError
 
     load_env_file()
     try:
         app()
+    except BridgeError as exc:
+        get_output().failure(exc)
+        raise SystemExit(exc.exit_code) from None
     except KeyboardInterrupt:  # pragma: no cover - interactive only
         raise SystemExit(130) from None
 

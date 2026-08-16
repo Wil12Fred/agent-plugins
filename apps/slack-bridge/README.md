@@ -54,12 +54,33 @@ Required scopes for the bot token: `users:read.email`, `im:write`, `chat:write`,
 
 ## What it needs from the machine
 
-This is the part no environment variable fixes, and it is worth knowing before
-you install it:
+**Checked at startup, not discovered later.** `serve` refuses to start when
+something required is missing, and names the install command:
 
-- **`tmux`**, to type into a running session.
-- **`qdbus`** (KDE) for part of the session discovery, on Linux desktops.
-- `claude` and/or `codex` on `PATH`, or pointed at by `CLAUDE_BIN`/`CODEX_BIN`.
+```
+$ slackbridge serve --confirm-prod-write
+error cannot start: tmux not installed
+
+  REQUIRED: tmux — typing a reply into a session that is already running
+      install: apt install tmux · pacman -S tmux · brew install tmux
+  optional: qdbus — finding sessions running in a KDE terminal window …
+      install: part of Plasma: apt install qdbus-qt6 · pacman -S qt6-tools
+```
+
+| | | |
+|---|---|---|
+| `claude` **or** `codex` | required | there is nothing to drive without one. `CLAUDE_BIN`/`CODEX_BIN` override the lookup |
+| `tmux` | required | typing a reply into a session that is already running |
+| `qdbus` (`qdbus6`) | optional | finding sessions in a KDE terminal window. Without it only tmux sessions are discoverable — it starts and says so |
+
+The required/optional split is the point. Before this check existed the bridge
+connected to Slack, reported itself healthy, and failed on the *first dispatch* —
+which from Slack is indistinguishable from the agent ignoring you. But refusing
+over `qdbus` would be worse than the problem: nobody needs KDE to drive a session
+from their phone, so that one warns and continues.
+
+`slackbridge health` reports the same table any time, so "why did my reply do
+nothing" has an answer before you go reading logs.
 
 It is written for a Linux workstation. On macOS the `tmux` path should work and
 the desktop discovery will not; nobody has tried it. Saying so here rather than
