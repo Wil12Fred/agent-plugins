@@ -48,6 +48,32 @@ app = typer.Typer(
     no_args_is_help=True,
 )
 
+
+@app.callback()
+def _root(
+    json_mode: Annotated[
+        bool,
+        typer.Option("--json", help="Emit exactly one JSON envelope on stdout."),
+    ] = False,
+    quiet: Annotated[bool, typer.Option("--quiet", help="Suppress progress on stderr.")] = False,
+) -> None:
+    """Options every command shares.
+
+    `--json` is the contract a script or an agent depends on: exactly one
+    envelope on stdout, `{"ok": ..., "data": ...}`, and an exit code that means
+    something. It lives here rather than on each command because a flag that
+    exists on some commands and not others is worse than one that exists on
+    none — the caller cannot write a loop.
+
+    This was missing from the first port, and no unit test could see it: the
+    commands wrote JSON anyway when they had nothing human to print, so the
+    output *looked* right while `ok`, `command` and the error class were absent
+    from every one of them.
+    """
+    from slackbridge.core.output import Output, set_output
+
+    set_output(Output(json_mode=json_mode, quiet=quiet))
+
 sessions_app = typer.Typer(
     name="sessions",
     help="Claude/Codex sessions: list, read, dispatch, close.",
