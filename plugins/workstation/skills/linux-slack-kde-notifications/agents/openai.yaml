@@ -1,0 +1,4 @@
+interface:
+  display_name: "Linux Slack KDE Notifications"
+  short_description: "Recover Slack desktop notification click behavior on KDE Plasma"
+  default_prompt: "Use $linux-slack-kde-notifications to diagnose and recover Slack desktop notification activation on KDE Plasma after Slack updates, including launcher normalization, X11 fallback, KDE cache refresh, and popup vs history validation."

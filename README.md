@@ -12,9 +12,12 @@ plugins/agent-toolkit/     a Claude Code plugin
 ├── agents/                2 subagents — Claude Code only
 └── tests/                 39 tests
 
+plugins/workstation/       a Claude Code plugin
+└── skills/                2 skills — this Arch/KDE machine's own operations
+
 apps/slack-bridge/         a service, not a plugin
 ├── src/slackbridge/       drive Claude Code and Codex sessions from a Slack thread
-└── tests/                 68 tests
+└── tests/                 68 unit + 10 e2e
 ```
 
 ---
@@ -107,6 +110,21 @@ Codex CLI, Gemini CLI and Cursor.
 | `vetting-third-party-tooling` | never install a third-party MCP — clone, read, score 1-10, adapt or escalate |
 | `verified-state-contract` | every claim about a live system carries the commit it was measured against |
 | `measuring-technical-debt` | the ratchet, and how a debt signal ends up unable to observe what it names |
+
+## This workstation
+
+[`plugins/workstation`](plugins/workstation) is the odd one out: two skills about
+**this Arch/KDE machine** rather than about any project — recovering the network
+after a system update, pacman, and why KDE stops opening Slack notifications
+after a Slack update.
+
+It is here rather than in a work repository because it is about the machine, not
+the employer. A colleague cloning a company repo should not inherit skills for a
+desktop they do not run.
+
+```bash
+claude plugin install workstation@agent-plugins
+```
 
 ## The subagents
 
