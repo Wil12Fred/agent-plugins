@@ -1,0 +1,16 @@
+{
+  "name": "agent-plugins",
+  "owner": {
+    "name": "Wil12Fred"
+  },
+  "description": "Project-agnostic tooling for coding agents: making a claim checkable, authoring skills and subagents, vetting third-party tooling, and keeping documentation honest about a moving system.",
+  "plugins": [
+    {
+      "name": "agent-toolkit",
+      "source": "./plugins/agent-toolkit",
+      "description": "Five skills and two subagents about making an agent's claims checkable. No project knowledge of any kind.",
+      "version": "0.1.0",
+      "author": { "name": "Wil12Fred" }
+    }
+  ]
+}

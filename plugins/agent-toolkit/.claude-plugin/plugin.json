@@ -1,0 +1,11 @@
+{
+  "name": "agent-toolkit",
+  "displayName": "Agent toolkit",
+  "description": "How to make an agent's claims checkable: fourteen ways a check passes while proving nothing, how to author skills and subagents, how to vet third-party tooling without installing it, and how to keep a claim about a moving system honest. No project-specific knowledge.",
+  "version": "0.1.0",
+  "author": {
+    "name": "Wilber Cutire"
+  },
+  "license": "MIT",
+  "keywords": ["verification", "subagents", "skills", "technical-debt", "code-review", "mcp"]
+}
