@@ -3,4 +3,8 @@
 node_modules/
 __pycache__/
 .venv/
-uv.lock
+
+# `uv.lock` is deliberately NOT ignored. These are applications, not libraries:
+# a clone should install the versions that were tested, not whatever resolves
+# today. The default run being green on this machine says nothing about a clone
+# that resolved a different httpx.
