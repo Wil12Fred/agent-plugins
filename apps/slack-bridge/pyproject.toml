@@ -10,6 +10,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
 dependencies = [
+    "opscore",
     "slack-bolt>=1.21",
     "slack-sdk>=3.33",
     "typer>=0.15",
@@ -46,3 +47,6 @@ testpaths = ["tests"]
 # real binaries, real tokens, real session state — so it is opt-in.
 addopts = "-m 'not integration'"
 markers = ["integration: exercises the real machine; run with -m integration"]
+
+[tool.uv.sources]
+opscore = { workspace = true }

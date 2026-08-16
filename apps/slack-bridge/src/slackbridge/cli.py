@@ -19,8 +19,8 @@ Operational facts that must not be lost:
   injection for a live one);
 * required bot scopes: ``users:read.email``, ``im:write``, ``chat:write``, ``im:history``.
 
-Tokens resolve through :mod:`slackbridge.core.secrets` and are never printed; where one has to be
-acknowledged at all it is rendered with :func:`slackbridge.core.secrets.redact`.
+Tokens resolve through :mod:`opscore.secrets` and are never printed; where one has to be
+acknowledged at all it is rendered with :func:`opscore.secrets.redact`.
 """
 
 from __future__ import annotations
@@ -35,11 +35,11 @@ from slackbridge import channel as channel_mod
 from slackbridge import claude, codex, config, requirements, sessions
 from slackbridge.api import SlackAPI
 from slackbridge.blocks import result_blocks
-from slackbridge.core.env import project_root
-from slackbridge.core.errors import ConfigError, NotFoundError, ValidationError
-from slackbridge.core.guard import Consequence, WriteIntent, check_write
-from slackbridge.core.output import get_output
-from slackbridge.core.secrets import redact
+from opscore.env import project_root
+from opscore.errors import ConfigError, NotFoundError, ValidationError
+from opscore.guard import Consequence, WriteIntent, check_write
+from opscore.output import get_output
+from opscore.secrets import redact
 from slackbridge.replies import read_thread, resolve_instruction
 
 app = typer.Typer(
@@ -70,7 +70,7 @@ def _root(
     output *looked* right while `ok`, `command` and the error class were absent
     from every one of them.
     """
-    from slackbridge.core.output import Output, set_output
+    from opscore.output import Output, set_output
 
     set_output(Output(json_mode=json_mode, quiet=quiet))
 
@@ -630,8 +630,8 @@ def main() -> None:
     the message, the fix and an exit code; anything else is a real bug and keeps
     its traceback.
     """
-    from slackbridge.core.env import load_env_file
-    from slackbridge.core.errors import BridgeError
+    from opscore.env import load_env_file
+    from opscore.errors import BridgeError
 
     load_env_file()
     try:

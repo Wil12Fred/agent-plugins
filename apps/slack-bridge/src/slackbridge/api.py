@@ -24,7 +24,7 @@ from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
 
 from slackbridge.config import SlackConfig
-from slackbridge.core.errors import ApiError, ConfigError
+from opscore.errors import ApiError, ConfigError
 
 _HISTORY_PAGE = 200
 _REPLY_PAGE = 200

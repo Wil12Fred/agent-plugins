@@ -1,0 +1,30 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "opscore"
+version = "0.1.0"
+description = "The half-dozen things every read-only operations tool needs: an error taxonomy that names its fix, one JSON envelope, secrets that are never printed, and a write guard."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+dependencies = ["rich>=13.9", "httpx>=0.27"]
+
+[dependency-groups]
+dev = ["pytest>=8", "ruff>=0.9", "mypy>=1.14"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/opscore"]
+artifacts = ["**/py.typed"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.mypy]
+strict = true
+python_version = "3.11"
