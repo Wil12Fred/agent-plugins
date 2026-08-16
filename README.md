@@ -5,11 +5,15 @@ Tooling for coding agents: a **CLI**, an **MCP server**, five **skills** and two
 host names, no ticket numbers.
 
 ```
-plugins/agent-toolkit/
-├── src/agentctl/     the CLI and the MCP server
-├── skills/           5 skills — SKILL.md, so Claude Code, Codex, Gemini and Cursor all read them
-├── agents/           2 subagents — Claude Code only
-└── tests/            39 tests
+plugins/agent-toolkit/     a Claude Code plugin
+├── src/agentctl/          the CLI and the MCP server
+├── skills/                5 skills — SKILL.md, so Claude Code, Codex, Gemini and Cursor all read them
+├── agents/                2 subagents — Claude Code only
+└── tests/                 39 tests
+
+apps/slack-bridge/         a service, not a plugin
+├── src/slackbridge/       drive Claude Code and Codex sessions from a Slack thread
+└── tests/                 55 tests
 ```
 
 ---
@@ -70,6 +74,25 @@ So the backend is chosen by what is actually running — KDE's Klipper first,
 because it takes ownership itself and keeps the entry in history — and the write
 is read back wherever a backend can be read back. Non-ASCII goes through the raw
 UTF-8 targets rather than the convenience API, which eats accents.
+
+---
+
+---
+
+## The Slack bridge
+
+[`apps/slack-bridge`](apps/slack-bridge) is a service rather than a plugin: a
+Socket Mode listener that lets you drive Claude Code and Codex sessions from a
+private Slack channel. Reply in a thread, the agent answers in that thread, and
+the session survives — so you can pick one up from your phone.
+
+```bash
+uvx --from apps/slack-bridge slackbridge health
+```
+
+Everything is environment-driven; the tokens, the channel, the allowlist and the
+agent binaries are all variables. It needs `tmux` and, on KDE, `qdbus` — which no
+variable fixes, so [its README](apps/slack-bridge/README.md) says so up front.
 
 ---
 
