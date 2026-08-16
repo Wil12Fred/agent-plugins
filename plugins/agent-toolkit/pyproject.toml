@@ -1,0 +1,35 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "agentctl"
+version = "0.1.0"
+description = "Measure what an agent would otherwise have to judge: what practices a repository has adopted, and what code leaked out of its code directory."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+dependencies = [
+    "typer>=0.15",
+    "mcp>=2.0",
+]
+
+[project.scripts]
+agentctl = "agentctl.cli:main"
+
+[dependency-groups]
+dev = ["pytest>=8", "ruff>=0.9", "mypy>=1.14"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/agentctl"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.mypy]
+strict = true
+python_version = "3.11"

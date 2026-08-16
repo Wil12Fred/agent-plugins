@@ -41,8 +41,29 @@ metadata. None is required — the skills work without one.
 `isolation` are Claude Code frontmatter, and Codex has its own agent mechanism
 with its own format. The skills are the portable half; the subagents are not.
 
-It ships no MCP server and no hooks, so it costs a handful of skill descriptions
-in context and nothing at runtime.
+## The MCP server
+
+Installing the plugin also gives you `agentctl`, a read-only MCP server with two
+tools. They exist because they were prose inside the auditor's prompt first: a
+model asked "does this repository do spec-driven development?" answers
+confidently either way, while a filesystem check answers with a path or with
+nothing.
+
+| Tool | Answers |
+|---|---|
+| `repo_detect` | which practices this repository has adopted, each with the paths that prove it |
+| `repo_strays` | which executables sit outside the code directory, and which are declared exceptions rather than nobody's decision |
+
+**Every tool is read-only because every command is.** There is no
+`--allow-writes` to grant and no write path to guard — a stronger property than
+a guarded write, and a cheaper one to verify.
+
+Standalone, without the plugin:
+
+```bash
+uvx --from plugins/agent-toolkit agentctl detect .
+uvx --from plugins/agent-toolkit agentctl strays .   # exits 7 when anything is undeclared
+```
 
 ## Why it is a separate plugin
 
