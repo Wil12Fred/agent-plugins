@@ -562,6 +562,10 @@ def service_unit(
     unit_name: Annotated[
         str, typer.Option("--unit-name", help="Name of the systemd unit to print.")
     ] = "slackbridge.service",
+    env_file: Annotated[
+        Path | None,
+        typer.Option("--env-file", help="Absolute path of the .env the service must read."),
+    ] = None,
 ) -> None:
     """Print the ``systemd --user`` unit that runs ``slackbridge serve``.
 
@@ -578,6 +582,10 @@ def service_unit(
     root = project_root()
     binary = binary_path or shutil.which("slackbridge") or str(root / ".venv/bin/slackbridge")
     codex_bin = shutil.which("codex")
+    # Without this the service starts from WorkingDirectory, finds no `.env`
+    # there, and dies on a missing token — which looks like a broken build
+    # rather than a missing path. Found by generating the unit and reading it.
+    env_line = f"\nEnvironment=OPSCORE_ENV_FILE={env_file}" if env_file else ""
     path_entries = ["%h/.local/bin", "/usr/local/bin", "/usr/bin", "/bin"]
     if codex_bin:
         codex_dir = str(Path(codex_bin).parent)
@@ -599,9 +607,9 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-# The CLI loads the .env itself, so no EnvironmentFile is needed. The claude and codex
-# CLIs must be reachable: claude is in ~/.local/bin, codex under a versioned nvm node bin.
-Environment=PATH={":".join(path_entries)}
+# The claude and codex CLIs must be reachable: claude is in ~/.local/bin, codex
+# under a versioned nvm node bin, and a minimal systemd environment has neither.
+Environment=PATH={":".join(path_entries)}{env_line}
 WorkingDirectory={root}
 ExecStart={binary} serve --confirm-prod-write
 Restart=always
