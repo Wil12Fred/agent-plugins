@@ -3,14 +3,25 @@
   "owner": {
     "name": "Wil12Fred"
   },
-  "description": "Project-agnostic tooling for coding agents: making a claim checkable, authoring skills and subagents, vetting third-party tooling, and keeping documentation honest about a moving system.",
+  "description": "Project-agnostic tooling for coding agents: making a claim checkable, authoring skills and subagents, vetting third-party tooling, plus this workstation's own operations.",
   "plugins": [
     {
       "name": "agent-toolkit",
       "source": "./plugins/agent-toolkit",
       "description": "Five skills and two subagents about making an agent's claims checkable. No project knowledge of any kind.",
       "version": "0.1.0",
-      "author": { "name": "Wil12Fred" }
+      "author": {
+        "name": "Wil12Fred"
+      }
+    },
+    {
+      "name": "workstation",
+      "source": "./plugins/workstation",
+      "description": "Operating this Arch/KDE workstation: network recovery after a system update, pacman, and desktop notification plumbing. About the machine, not about any product.",
+      "version": "0.1.0",
+      "author": {
+        "name": "Wil12Fred"
+      }
     }
   ]
 }

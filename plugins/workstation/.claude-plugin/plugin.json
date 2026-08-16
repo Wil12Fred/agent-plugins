@@ -1,0 +1,10 @@
+{
+  "name": "workstation",
+  "displayName": "Linux workstation ops",
+  "description": "Operating this Arch/KDE workstation itself: network recovery after a system update, pacman, and desktop notification plumbing. Nothing about any product — this is the machine, not the work.",
+  "version": "0.1.0",
+  "author": {
+    "name": "Wilber Cutire"
+  },
+  "keywords": ["arch", "kde", "linux", "workstation"]
+}
