@@ -197,5 +197,5 @@ def _run_mmdc(npx: str, mmd: Path, out: Path, config: Path, *, background: str) 
     if completed.returncode != 0 or not out.exists():
         raise ApiError(
             f"mermaid-cli failed rendering {mmd.name}",
-            body=(completed.stderr or completed.stdout).strip()[:500] or None,
+            detail=(completed.stderr or completed.stdout).strip()[:500] or None,
         )

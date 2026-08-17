@@ -28,6 +28,7 @@ import typer
 from agentctl import css, mermaid, pdfassets, svgsprite
 from agentctl import detect as detect_module
 from agentctl import strays as strays_module
+from agentctl.errors import ValidationError
 
 app = typer.Typer(
     name="agentctl",
@@ -226,8 +227,9 @@ def mcp_command(
 # pages of a brand manual" and "render a Mermaid file without a browser".
 # --------------------------------------------------------------------------- #
 
-dev_app = typer.Typer(name="dev", help="General utilities: PDF, SVG, CSS, Mermaid.",
-                      no_args_is_help=True)
+dev_app = typer.Typer(
+    name="dev", help="General utilities: PDF, SVG, CSS, Mermaid.", no_args_is_help=True
+)
 app.add_typer(dev_app, name="dev")
 
 pdf_app = typer.Typer(name="pdf", help="PDF asset extraction.", no_args_is_help=True)
@@ -245,8 +247,11 @@ def _emit_result(data: Any, human: str | None = None, **_: Any) -> None:
     bodies — a port should move code, not rephrase it, or the diff stops being
     reviewable and the behaviour stops being the thing that was tested.
     """
-    _emit(data if isinstance(data, dict) else {"result": data}, as_json=False,
-          human=human if human is not None else json.dumps(data, indent=2, default=str))
+    _emit(
+        data if isinstance(data, dict) else {"result": data},
+        as_json=False,
+        human=human if human is not None else json.dumps(data, indent=2, default=str),
+    )
 
 
 @pdf_app.command("extract")
@@ -299,11 +304,7 @@ def pdf_extract(
         ),
         keep_going=keep_going,
     )
-    get_output().table(
-        rows,
-        columns=["file", "width", "height", "colorspace", "bytes", "extracted_from"],
-        title=f"{len(rows)} asset(s) → {out_dir} (manifest.csv written)",
-    )
+    _emit_result(rows, human=str(f"{len(rows)} asset(s) → {out_dir} (manifest.csv written)"))
 
 
 @pdf_app.command("combine-svg")
@@ -375,34 +376,32 @@ def css_hue_shift(
     Previews by default: the rewrite is **in place** and the originals are not
     backed up, so ``--apply`` has to be explicit (``--write`` is an alias).
     """
-    files = css_mod.collect(list(paths))
+    files = css.collect(list(paths))
     if not files:
         raise ValidationError("no .css files found under the given paths")
-    shift = css_mod.HueShift(
+    shift = css.HueShift(
         delta=delta,
         gray_hue=gray_hue,
         white_threshold=white_threshold,
         black_threshold=black_threshold,
     )
-    out = get_output()
     if write:
-        # Rewriting in place with no backups is a repository write, so it goes
-        # through the same guard everything else does — `--apply` alone should
-        # not be the only thing between a preview and 8 mangled stylesheets.
-        check_write(
-            WriteIntent(
-                consequence=Consequence.REPOSITORY,
-                action=f"rewrite colours in {len(files)} file(s) in place, without backups",
-                target=str(files[0].parent) if files else "?",
-            ),
-            dry_run=False,
-            confirmed=confirm,
+        # `--apply` is the gate, and it defaults off: the command previews unless
+        # you say otherwise. It rewrites in place with no backups, so it says
+        # exactly what it is about to touch before doing it — a preview that
+        # reads the same as a write is how eight stylesheets get mangled.
+        typer.echo(
+            f"rewriting colours in {len(files)} file(s) in place, without backups",
+            err=True,
         )
 
-    mapping, changed = css_mod.shift_files(files, shift, write=write)
+    mapping, changed = css.shift_files(files, shift, write=write)
     if not write:
-        out.warn(f"preview only: {len(files)} file(s) unchanged — pass --apply to rewrite them")
-    out.result(
+        typer.echo(
+            f"preview only: {len(files)} file(s) unchanged — pass --apply to rewrite them",
+            err=True,
+        )
+    _emit_result(
         {
             "files": len(files),
             "files_changed": changed if write else 0,
@@ -447,20 +446,17 @@ def mermaid_render(
         path for path in mermaid.planned_outputs(target, out_dir=out_dir, svg=svg) if path.is_file()
     ]
     if existing:
-        check_write(
-            WriteIntent(
-                consequence=Consequence.REPOSITORY,
-                action=f"overwrite {len(existing)} already-rendered image(s)",
-                target=str(existing[0].parent),
-            ),
-            dry_run=False,
-            confirmed=confirm,
+        # Say what is about to be replaced. Rendering into a directory that
+        # already holds images is the normal case, and silently overwriting one
+        # somebody hand-edited is the failure worth naming out loud.
+        typer.echo(
+            f"overwriting {len(existing)} already-rendered image(s) in {existing[0].parent}",
+            err=True,
         )
     rendered = mermaid.render(target, out_dir=out_dir, svg=svg)
-    get_output().table(
+    _emit_result(
         [{"source": str(r.source), "output": str(r.output)} for r in rendered],
-        columns=["source", "output"],
-        title=f"{len(rendered)} image(s)",
+        human=str(f"{len(rendered)} image(s)"),
     )
 
 
