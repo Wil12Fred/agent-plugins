@@ -37,3 +37,25 @@ class UsageError(AgentctlError):
     """The request itself is impossible, whatever the environment."""
 
     exit_code = 3
+
+
+class NotFoundError(AgentctlError):
+    """What was asked for does not exist — a file, a page, a package.
+
+    Separate from `UsageError` because the caller often wants to branch: a
+    missing optional input is normal, a malformed request is not.
+    """
+
+    exit_code = 4
+
+
+class ValidationError(AgentctlError):
+    """Input reached the tool in a shape it cannot work with."""
+
+    exit_code = 5
+
+
+class ApiError(AgentctlError):
+    """Something this tool shells out to, or calls, failed on its own terms."""
+
+    exit_code = 6

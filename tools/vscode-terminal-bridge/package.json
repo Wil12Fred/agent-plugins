@@ -1,0 +1,15 @@
+{
+  "name": "claude-terminal-bridge",
+  "displayName": "Claude Terminal Bridge",
+  "description": "Inject text into the exact integrated terminal (matched by process id) for claude-sessions --send-live.",
+  "version": "0.0.1",
+  "publisher": "wil12fred",
+  "engines": {
+    "vscode": "^1.70.0"
+  },
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./extension.js",
+  "contributes": {}
+}
