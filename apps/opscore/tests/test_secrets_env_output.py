@@ -25,7 +25,7 @@ from opscore.secrets import redact
 
 
 def test_an_unset_secret_says_so_rather_than_printing_nothing() -> None:
-    """"" and "<unset>" read very differently in a log."""
+    """ "" and "<unset>" read very differently in a log."""
     assert redact(None) == "<unset>"
     assert redact("") == "<unset>"
 
