@@ -90,3 +90,56 @@ def test_the_edge_hop_is_part_of_the_picture(chart: Path) -> None:
     rendered = k8s.render(k8s.load(chart), chart_dir=chart, values_name="values.yaml")
     assert "Cloudflare" in rendered
     assert "CF --> LB" in rendered
+
+
+# --- the generated header is a citation, so it carries a revision -----------
+
+
+def test_the_header_stamps_the_commit_the_chart_was_read_at(tmp_path) -> None:
+    """Rule: a generated document that names a source path must say which
+    revision that path was true at.
+
+    A path and a line number are only true against one revision; without the
+    commit a reader cannot distinguish "this moved" from "this was always
+    wrong". The generator is the only party that knows for certain, because it
+    is holding the file.
+    """
+    import subprocess
+
+    from cloudprobe import k8s
+
+    chart = tmp_path / "some-chart"
+    chart.mkdir()
+    (chart / "values.yaml").write_text("x: 1\n", encoding="utf-8")
+    for command in (
+        ["git", "init", "-q"],
+        ["git", "config", "user.email", "t@example.invalid"],
+        ["git", "config", "user.name", "t"],
+        ["git", "add", "-A"],
+        ["git", "-c", "commit.gpgsign=false", "commit", "-qm", "chart"],
+    ):
+        subprocess.run(command, cwd=chart, check=True, capture_output=True)
+
+    header = k8s.render(k8s.Chart(), chart_dir=chart, values_name="values.yaml")
+
+    stamp = k8s.chart_commit(chart)
+    assert stamp is not None
+    assert f"@{stamp}" in header
+
+
+def test_outside_a_repository_the_header_says_unknown_rather_than_guessing(tmp_path) -> None:
+    """The control, and the more important half.
+
+    An unpacked chart has no revision. Inventing one, or silently omitting the
+    stamp so the line looks the same as a stamped one, would be worse than the
+    problem: the reader would trust a citation nobody can check.
+    """
+    from cloudprobe import k8s
+
+    chart = tmp_path / "loose-chart"
+    chart.mkdir()
+
+    header = k8s.render(k8s.Chart(), chart_dir=chart, values_name="values.yaml")
+
+    assert k8s.chart_commit(chart) is None
+    assert "revision unknown" in header

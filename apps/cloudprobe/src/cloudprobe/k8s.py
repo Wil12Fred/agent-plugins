@@ -12,6 +12,7 @@ opened, let alone rendered.
 from __future__ import annotations
 
 import os
+import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -98,12 +99,41 @@ def _chart_label(chart_dir: Path | None) -> str:
     return chart_dir.name if chart_dir else "<chart>"
 
 
+def chart_commit(chart_dir: Path | None) -> str | None:
+    """The commit the chart was at when it was read, if it is in a git repository.
+
+    A generated document that names a source path is a citation, and a path is
+    only true against one revision — without the commit a reader cannot tell
+    "this moved" from "this was always wrong". The generator is the one thing
+    that knows the answer for certain, since it is holding the file, so it
+    stamps it rather than leaving a human to guess later.
+
+    Returns None outside a repository, which is a real case (an unpacked chart)
+    and must read as *unknown*, not as an invented value.
+    """
+    if chart_dir is None or not chart_dir.exists():
+        return None
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(chart_dir), "log", "-1", "--format=%h %cs", "--", "."],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):  # pragma: no cover - environment
+        return None
+    return result.stdout.strip() or None
+
+
 def render(chart: Chart, *, chart_dir: Path | None, values_name: str) -> str:
     """Render the chart as a Mermaid diagram."""
     lines = [
         "# Kubernetes architecture",
         "",
-        f"> {MARKER} from `{_chart_label(chart_dir)}/{values_name}` — do not hand-edit.",
+        f"> {MARKER} from `{_chart_label(chart_dir)}/{values_name}`"
+        + (f" @{stamp}" if (stamp := chart_commit(chart_dir)) else " (revision unknown)")
+        + " — do not hand-edit.",
         "",
         "Request flow: **Cloudflare → GCP HTTPS load balancer → GKE**. Cloudflare",
         "owns the domain rules and edge blocking; the chart below owns everything",
