@@ -11,9 +11,8 @@ set below is what the automation scripts converged on.
 
 from __future__ import annotations
 
-import os
-
 import json
+import os
 from collections.abc import Mapping
 from typing import Any, Self
 
@@ -59,7 +58,7 @@ CLOUDFLARE_HEADERS: dict[str, str] = {
 
 
 class HttpClient:
-    """Thin JSON client with Fitco's auth and error conventions baked in.
+    """Thin JSON client with the retry and error conventions a CLI needs.
 
     Usage::
 
@@ -132,7 +131,7 @@ class HttpClient:
 
         Raises:
             AuthenticationError: on 401, and on a 403 whose body mentions a
-                token. A bare 403 is *not* auth — Fitco answers 403 for domain
+                token. A bare 403 is *not* auth — many APIs answer 403 for domain
                 errors too (see :meth:`_decode`) — and becomes an ApiError.
             NotFoundError: on 404.
             UpstreamTimeoutError: the call did not answer in time. A write that timed
@@ -161,7 +160,7 @@ class HttpClient:
 
     @staticmethod
     def _decode(response: httpx.Response, method: str, url: str) -> Any:
-        # 401 is always auth. 403 is not: Fitco answers 403 for domain errors
+        # 401 is always auth. 403 is not: many APIs answer 403 for domain errors
         # too (`INVALID_OBJECT_ID` from lessons delete-future, for one), and
         # reporting those as an expired session sends the reader hunting for a
         # credential problem that does not exist. Only call it auth when the

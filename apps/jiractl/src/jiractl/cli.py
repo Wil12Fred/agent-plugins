@@ -49,7 +49,7 @@ def _summarise(issue: dict[str, Any]) -> dict[str, Any]:
 
 @app.command("get")
 def get_issue(
-    key: Annotated[str, typer.Argument(help="Issue key, e.g. OPER-803.")],
+    key: Annotated[str, typer.Argument(help="Issue key, e.g. PROJ-123.")],
     full: Annotated[bool, typer.Option("--full", help="Return every field.")] = False,
 ) -> None:
     """Fetch one issue."""

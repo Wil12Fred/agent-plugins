@@ -12,7 +12,7 @@ Guards, in the order they run — each one exists because of a real failure:
 3. ``bot_id``/``app_id`` set -> ignore. **Config-independent on purpose**: it holds even
    when the allowlist env vars are empty in this process, where ``is_allowed`` fails open.
    Without it the bridge ingests its own completion notice and every answer spawns a new
-   session (the OPER-714 loop);
+   session (the reply loop);
 4. not allowlisted -> ignore;
 5. already-seen ``ts`` -> ignore. Slack redelivers events; the bounded ``OrderedDict``
    keeps the dedup set from growing without limit in a long-lived listener.

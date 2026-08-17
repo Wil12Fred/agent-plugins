@@ -52,7 +52,7 @@ def test_links_carry_their_href() -> None:
 
 
 def test_bare_urls_become_links() -> None:
-    nodes = adf.inline_from_markdown("https://example.atlassian.net/browse/OPER-803")
+    nodes = adf.inline_from_markdown("https://example.atlassian.net/browse/PROJ-123")
     assert nodes[0]["marks"][0]["type"] == "link"
 
 
@@ -96,7 +96,7 @@ def test_horizontal_rules_and_blockquotes() -> None:
 
 def test_a_realistic_comment_produces_every_block_type() -> None:
     markdown = (
-        "# OPER-803 — comentario\n\n"
+        "# PROJ-123 — comentario\n\n"
         "Texto con **negrita** y `código`.\n\n"
         "---\n\n"
         "## Tareas\n\n"
@@ -152,7 +152,7 @@ def test_a_description_round_trips_through_both_converters() -> None:
         "```sql\nSELECT 1;\n```\n\n"
         "---\n\n"
         "| a | b |\n|---|---|\n| 1 | 2 |\n\n"
-        "Ver [el ticket](https://example.atlassian.net/browse/OPER-1)."
+        "Ver [el ticket](https://example.atlassian.net/browse/PROJ-1)."
     )
     assert adf.to_markdown(adf.from_markdown(source)) == source.strip()
 

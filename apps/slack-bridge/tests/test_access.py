@@ -27,7 +27,7 @@ class TestAllowlist:
 
 
 class TestBridgePostGuard:
-    """OPER-714: the bridge posted a completion notice, the allowlist was empty in that
+    """The reply loop: the bridge posted a completion notice, the allowlist was empty in that
     process so ``is_allowed`` failed open, and the notice was ingested as a new request —
     every answer spawned another session. The bot_id guard must hold regardless of config.
     """

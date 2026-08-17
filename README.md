@@ -29,6 +29,7 @@ apps/                      services and CLIs, sharing `opscore`
 | `plugins/agent-toolkit` | 39 |
 | `apps/slack-bridge` | 68 unit + 10 e2e |
 | `apps/cloudprobe` | 72 |
+| `apps/opscore` | 39 |
 | `apps/gpull` | 10 |
 | `apps/jiractl` | 22 + 4 integration |
 
@@ -233,14 +234,21 @@ rather than a dependency: the Klipper path needs nothing at all.
 
 ## Development
 
-Each package is independent — its own `pyproject.toml`, its own tests.
+One gate over all six packages:
 
 ```bash
-cd plugins/agent-toolkit && uv sync --all-extras && uv run pytest   # 68 tests
-cd apps/slack-bridge     && uv sync                && uv run pytest   # 68 tests
+make check          # lint + typecheck + tests + plugin manifests — 279 tests
+make integration    # the suites that touch this machine and the network
+make fmt            # ruff format + fix
 ```
 
-Both are `ruff check` and `mypy --strict` clean.
+Each package is independent — its own `pyproject.toml`, its own tests — and the
+apps share `opscore` through a uv workspace. `plugins/agent-toolkit` deliberately
+does not: a Claude Code plugin is installed by copying its directory, so it has
+to carry its own dependencies.
+
+Everything is `mypy --strict` clean. How to work here, and the one rule that
+governs it, is in [`AGENTS.md`](AGENTS.md).
 
 ## The idea behind all of it
 

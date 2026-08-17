@@ -12,7 +12,7 @@ Two token identities exist and they are not interchangeable:
     processing separates the human's instructions from the bridge's own posts by
     ``bot_id``/``app_id``; posting with the user token makes the bridge's messages
     indistinguishable from the human's, so the parser re-ingests its own output and
-    loops (see the OPER-714 regression covered in ``tests/test_access.py``).
+    loops (see the reply-loop regression covered in ``tests/test_access.py``).
 
 ``SLACK_TOKEN`` (``xoxp-…``)
     Wilber's user identity. Only used where the *user* must be the author (deleting

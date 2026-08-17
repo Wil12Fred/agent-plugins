@@ -76,7 +76,7 @@ def test_plain_text_is_not_mangled() -> None:
 def test_no_avd_is_assumed(monkeypatch: pytest.MonkeyPatch) -> None:
     """Rule: booting somebody else's emulator is a surprise, not a convenience."""
     monkeypatch.delenv("ANDROID_AVD", raising=False)
-    assert android.DEFAULT_AVD == "" or android.DEFAULT_AVD == "fitco_test"
+    assert android.DEFAULT_AVD == ""
 
 
 def test_detecting_a_package_without_a_filter_is_refused(

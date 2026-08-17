@@ -12,7 +12,7 @@ Two independent guards keep the bridge from answering itself, and both are neede
    the listener process, where :func:`is_allowed` would otherwise fail open.
 2. the allowlist itself never contains ``SLACK_BOT_USER_ID``.
 
-Regression that motivates guard 1 (OPER-714): the app posted a completion notice as
+Regression that motivates guard 1: the app posted a completion notice as
 itself; the allowlist was empty in that process, ``is_allowed`` failed open, and the
 notice was ingested as a new top-level request — every answer spawned another session.
 """
