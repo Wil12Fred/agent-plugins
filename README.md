@@ -6,11 +6,13 @@ sessions from a phone. Everything here is project-agnostic — no company, no
 product, no host names, no ticket numbers.
 
 ```
+tools/vscode-terminal-bridge/   a VS Code extension: type into one *specific* terminal
+
 plugins/agent-toolkit/     a Claude Code plugin
 ├── src/agentctl/          the CLI and the MCP server
 ├── skills/                5 skills — SKILL.md, so Claude Code, Codex, Gemini and Cursor all read them
 ├── agents/                2 subagents — Claude Code only
-└── tests/                 57 tests
+└── tests/                 68 tests
 
 plugins/workstation/       a Claude Code plugin
 └── skills/                2 skills — this Arch/KDE machine's own operations
@@ -43,6 +45,7 @@ uvx --from plugins/agent-toolkit agentctl --help
 | `agentctl strays [path]` | which executables sit outside the code directory, and which are declared exceptions rather than nobody's decision. Exits 7 when anything is undeclared |
 | `agentctl clipboard copy` | put text on the clipboard **and verify it landed** |
 | `agentctl android …` | boot a headless emulator, screenshot it, tap, type, read logcat, install an APK |
+| `agentctl dev pdf\|css\|mermaid` | extract a PDF's pages and images, combine SVGs into a sprite, hue-shift a stylesheet, render Mermaid without a browser |
 | `agentctl mcp` | serve `detect` and `strays` as MCP tools over stdio |
 
 Every command takes `--json` and answers with exactly one envelope, so a script
@@ -226,7 +229,7 @@ rather than a dependency: the Klipper path needs nothing at all.
 Each package is independent — its own `pyproject.toml`, its own tests.
 
 ```bash
-cd plugins/agent-toolkit && uv sync --all-extras && uv run pytest   # 57 tests
+cd plugins/agent-toolkit && uv sync --all-extras && uv run pytest   # 68 tests
 cd apps/slack-bridge     && uv sync                && uv run pytest   # 68 tests
 ```
 
