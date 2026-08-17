@@ -16,7 +16,7 @@ never happened":
    that survives a malformed payload. Searching one of the three finds a third
    of the story.
 
-This was learned reconstructing an OPER-816 run and is the reusable half of a
+This was learned reconstructing a real queue run and is the reusable half of a
 script whose trigger endpoint never shipped.
 """
 

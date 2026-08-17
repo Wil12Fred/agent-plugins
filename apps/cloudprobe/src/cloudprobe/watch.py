@@ -1,6 +1,6 @@
 """Watching a deploy: is the thing that just shipped making anything worse?
 
-Ported from `specs/OPER-803/monitor-despliegue.py`, which watched two merge
+Ported from a deploy watcher written for one release, which watched two merge
 requests, an error-code baseline, reservation volume and an iOS release, all
 hardcoded to one ticket. The ticket-bound part was three constants. What is here
 is the part that was not: two measurement techniques that keep being needed and

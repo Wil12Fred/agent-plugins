@@ -35,7 +35,7 @@ from opscore.sql import assert_read_only
 
 CF_API = "https://api.cloudflare.com/client/v4"
 
-# The column set the OPER-595 TotalPass webhook investigation used, kept
+# The column set a partner-webhook investigation used, kept
 # verbatim so a re-run of that forensics reproduces the same shape.
 DEFAULT_COLUMNS = (
     "botscore",
@@ -73,7 +73,10 @@ DEFAULT_COLUMNS = (
 
 DEFAULT_HOST = os.environ.get("CLOUDPROBE_HOST", "")
 """The host whose Cloudflare zone to query. Set `CLOUDPROBE_HOST` or pass it."""
-DEFAULT_WEBHOOK_PATH = "/integration-calendar/totalpass/webhook"
+DEFAULT_WEBHOOK_PATH = os.environ.get("CLOUDPROBE_WEBHOOK_PATH", "")
+"""The path to inspect. Unset by default — a partner's webhook path is not
+something to guess, and guessing returns an empty result set that reads like
+"nobody called it"."""
 DEFAULT_DAYS = 30
 DATASET = "http_requests"
 

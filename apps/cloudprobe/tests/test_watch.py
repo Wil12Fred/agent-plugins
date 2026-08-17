@@ -1,6 +1,6 @@
 """Deploy watching: the floor rule and the control rule.
 
-Both came out of `specs/OPER-803/monitor-despliegue.py`, and both exist because
+Both came out of a deploy watcher written for one release, and both exist because
 the obvious version of the check produces alerts nobody believes. Each test
 names the rule it enforces.
 """
@@ -181,6 +181,6 @@ def test_the_baseline_probe_alerts_on_the_first_occurrence_when_the_baseline_is_
 
 
 def test_a_code_expected_to_rise_does_not_alert_at_its_baseline() -> None:
-    """OPER-803's case: LOGIN_STATUS rising was the fix working, not a regression."""
+    """The case this came from: an error code rising was the fix working, not a regression."""
     assert not watch.over_baseline("GLOBAL.ERROR_LOGIN_STATUS", 4, 4).alert
     assert watch.over_baseline("GLOBAL.ERROR_LOGIN_STATUS", 5, 4).alert
