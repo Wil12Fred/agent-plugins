@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any
 
 from agentctl import detect as detect_module
+from agentctl import rules as rules_module
 from agentctl import strays as strays_module
 
 SERVER_NAME = "agentctl"
@@ -70,6 +71,29 @@ TOOLS: tuple[dict[str, Any], ...] = (
             },
         },
     },
+    {
+        "name": "repo_rules",
+        "description": (
+            "Report the rules a repository declared for ITSELF in `.agent-rules.toml`, "
+            "with each rule's scope and its exceptions, plus the prose documents "
+            "(AGENTS.md, a constitution, CONTRIBUTING.md) that carry rules informally and "
+            "must be READ rather than parsed. With check=true the measurable rules are "
+            "measured and the number of files each one weighed is returned — 'no "
+            "violations' over zero files is not a pass. Rules this tool cannot measure "
+            "are named as unmeasured, never reported as passing. Use this alongside "
+            "repo_detect: detect says what the repo ADOPTED, rules says what it DECIDED."
+        ),
+        "schema": {
+            "type": "object",
+            "properties": {
+                "root": _ROOT_PROPERTY,
+                "check": {
+                    "type": "boolean",
+                    "description": "Measure the checkable rules, not only list them.",
+                },
+            },
+        },
+    },
 )
 
 
@@ -93,6 +117,13 @@ def _call(name: str, arguments: dict[str, Any], default_root: Path) -> tuple[str
         only = arguments.get("only")
         result = detect_module.detect(root, only=only if isinstance(only, list) else None)
         return json.dumps({"ok": True, "data": result.as_dict()}, indent=2), False
+
+    if name == "repo_rules":
+        declaration = rules_module.load(root)
+        payload = declaration.as_dict()
+        if arguments.get("check"):
+            payload["check"] = rules_module.check(root, declaration).as_dict()
+        return json.dumps({"ok": True, "data": payload}, indent=2), False
 
     if name == "repo_strays":
         if not detect_module.code_roots(root):

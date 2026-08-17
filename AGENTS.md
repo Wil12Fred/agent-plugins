@@ -122,6 +122,21 @@ Skills are a cross-vendor standard, so they run unmodified in Codex, Gemini and
 Cursor. Subagents do not port — `permissionMode`, `tools` and `isolation` are
 Claude Code frontmatter.
 
+## Declaring a rule
+
+This repository declares its own rules in `.agent-rules.toml`, and
+`agentctl rules --check .` measures the ones that can be measured. Adding a rule
+there is how you make it something an auditor enforces rather than something a
+reader may notice.
+
+Two obligations when you add one:
+
+- **Write the exceptions.** A rule without its carve-outs is a different rule,
+  and the auditor will hold the repository to the stricter one.
+- **Say whether it is measurable.** Only `kind = "language"` is checked today.
+  Everything else is carried to the auditor as text — which is worth having, but
+  it is read, not verified, and the report must say which of the two happened.
+
 ## Before you write "verified"
 
 Read the `verifying-a-claim` skill, which lives here. It is fourteen ways a

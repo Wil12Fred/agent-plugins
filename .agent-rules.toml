@@ -1,0 +1,51 @@
+# The rules this repository has decided for itself, in a form `agentctl rules`
+# can hand to an auditor. The reasoning lives in AGENTS.md; this is the part a
+# tool can act on.
+#
+# `kind = "language"` with `expect` is measured. Everything else is carried
+# through as text with its scope attached — which is still worth having, because
+# an auditor then knows the rule exists and where it applies, instead of
+# inventing one out of prose.
+
+[[rule]]
+name = "english-everywhere"
+kind = "language"
+expect = "english"
+rule = "Every file in this repository is written in English — prose, comments, docstrings, identifiers and commit messages alike."
+why = """
+This repository is published for other people's projects. A comment in the
+author's own language is a comment half its readers cannot use, and it is the
+half that most needs the explanation.
+"""
+
+[[rule]]
+name = "no-proper-nouns"
+kind = "naming"
+rule = "Nothing may name a company, a product, a customer, a hostname, a ticket key or a person's account — not in code, not in a docstring, not in a test fixture, not in a default value."
+why = """
+This is the constraint the whole repository exists under; everything else
+follows from it. Two consequences that are easy to miss: a default is a name
+(`DEFAULT_CLUSTER = "prod-cluster-7"` is somebody's cluster), and a test fixture
+is a name — the leak that survives review, because nobody reads fixtures.
+"""
+
+[[rule]]
+name = "refuse-rather-than-guess"
+kind = "process"
+rule = "No default host, cluster, project or filter. Each missing value raises ConfigError naming the variable that fixes it."
+why = """
+A wrong default does not produce an error, it produces an answer — and an answer
+is what a reader trusts. An unset cluster once emitted `cluster_name=\"\"`, which
+matches nothing and reads exactly like \"there were no such logs\".
+"""
+
+[[rule]]
+name = "a-test-names-its-rule"
+kind = "process"
+applies_to = ["**/tests/**", "**/test_*.py"]
+rule = "Each test names the rule it enforces in its docstring, and where the rule came from a real failure, says what the failure looked like. Suites include a control."
+why = """
+A suite where every case asserts the same direction passes when the function
+always returns that answer. And a test called `test_parse_ok` tells a later
+reader nothing about whether deleting it is safe.
+"""
