@@ -25,6 +25,7 @@ from typing import Annotated, Any
 
 import typer
 
+from agentctl import css, mermaid, pdfassets, svgsprite
 from agentctl import detect as detect_module
 from agentctl import strays as strays_module
 
@@ -214,6 +215,256 @@ def mcp_command(
     from agentctl.mcp_server import serve
 
     serve(default_root=path or Path.cwd())
+
+
+# --------------------------------------------------------------------------- #
+# `agentctl dev` — the utilities that keep coming up
+#
+# None of these is about verification, which is the rest of this CLI's theme.
+# They are here because they are genuinely general — a PDF is a PDF — and
+# because the alternative was each project keeping its own copy of "extract the
+# pages of a brand manual" and "render a Mermaid file without a browser".
+# --------------------------------------------------------------------------- #
+
+dev_app = typer.Typer(name="dev", help="General utilities: PDF, SVG, CSS, Mermaid.",
+                      no_args_is_help=True)
+app.add_typer(dev_app, name="dev")
+
+pdf_app = typer.Typer(name="pdf", help="PDF asset extraction.", no_args_is_help=True)
+css_app = typer.Typer(name="css", help="Stylesheet colour transforms.", no_args_is_help=True)
+mermaid_app = typer.Typer(name="mermaid", help="Mermaid diagram rendering.", no_args_is_help=True)
+dev_app.add_typer(pdf_app, name="pdf")
+dev_app.add_typer(css_app, name="css")
+dev_app.add_typer(mermaid_app, name="mermaid")
+
+
+def _emit_result(data: Any, human: str | None = None, **_: Any) -> None:
+    """The devtools commands were written against a richer output object.
+
+    This keeps their call sites unchanged rather than rewriting four command
+    bodies — a port should move code, not rephrase it, or the diff stops being
+    reviewable and the behaviour stops being the thing that was tested.
+    """
+    _emit(data if isinstance(data, dict) else {"result": data}, as_json=False,
+          human=human if human is not None else json.dumps(data, indent=2, default=str))
+
+
+@pdf_app.command("extract")
+def pdf_extract(
+    pdf: Annotated[Path, typer.Argument(help="Source PDF (read-only).")],
+    out_dir: Annotated[Path, typer.Option("--out-dir", help="Destination folder.")],
+    mode: Annotated[
+        list[pdfassets.Mode] | None,
+        typer.Option("--mode", help="pages | images | svg (repeatable; default: pages)."),
+    ] = None,
+    prefix: Annotated[
+        str | None, typer.Option("--prefix", help="Output filename prefix (default: PDF stem).")
+    ] = None,
+    fmt: Annotated[
+        pdfassets.RasterFormat, typer.Option("--format", help="Raster format for --mode pages.")
+    ] = pdfassets.RasterFormat.PNG,
+    dpi: Annotated[int, typer.Option("--dpi", help="Render resolution for --mode pages.")] = 150,
+    first: Annotated[int | None, typer.Option("--first", help="First page (1-based).")] = None,
+    last: Annotated[int | None, typer.Option("--last", help="Last page (1-based).")] = None,
+    min_width: Annotated[int, typer.Option("--min-width", help="Drop narrower images.")] = 0,
+    min_height: Annotated[int, typer.Option("--min-height", help="Drop shorter images.")] = 0,
+    drop_masks: Annotated[
+        bool, typer.Option("--drop-masks", help="Drop grayscale images (usually alpha masks).")
+    ] = False,
+    keep_going: Annotated[
+        bool, typer.Option("--keep-going", help="Continue when one page fails to convert.")
+    ] = False,
+) -> None:
+    """Extract a PDF's pages, embedded images, and/or vector pages.
+
+    The three modes answer different needs and are not interchangeable:
+    ``pages`` rasterises composed layouts, ``images`` lifts embedded photography
+    at native resolution (no quality loss), ``svg`` preserves vector paths so a
+    logo comes out as a real SVG. Combine them by repeating ``--mode``.
+
+    Needs poppler-utils; ImageMagick is optional and only enables the size
+    filters.
+    """
+    rows = pdfassets.extract(
+        pdf,
+        out_dir,
+        modes=list(mode) if mode else [pdfassets.Mode.PAGES],
+        prefix=prefix,
+        dpi=dpi,
+        fmt=fmt,
+        first=first,
+        last=last,
+        filters=pdfassets.Filters(
+            min_width=min_width, min_height=min_height, drop_masks=drop_masks
+        ),
+        keep_going=keep_going,
+    )
+    get_output().table(
+        rows,
+        columns=["file", "width", "height", "colorspace", "bytes", "extracted_from"],
+        title=f"{len(rows)} asset(s) → {out_dir} (manifest.csv written)",
+    )
+
+
+@pdf_app.command("combine-svg")
+def pdf_combine_svg(
+    svg: Annotated[list[Path], typer.Argument(help="Source .svg files.")],
+    out: Annotated[Path, typer.Option("--out", help="Destination sprite path.")],
+    id_prefix: Annotated[str, typer.Option("--id-prefix", help="Prefix for every symbol id.")] = "",
+    preview: Annotated[
+        Path | None, typer.Option("--preview", help="Also write an HTML preview page.")
+    ] = None,
+) -> None:
+    """Combine SVG files into one sprite of ``<symbol>`` elements.
+
+    Ids come from the filenames, so ``<use href="#om-logo-01">`` keeps working
+    across rebuilds. ``--preview`` renders every symbol on grey, which is the
+    only way to see whether a white logo survived the extraction.
+    """
+    ids = svgsprite.combine(list(svg), out, id_prefix=id_prefix)
+    if preview:
+        svgsprite.write_preview(out, preview, ids)
+    _emit_result(
+        {
+            "sprite": str(out),
+            "preview": str(preview) if preview else None,
+            "symbols": ids,
+        }
+    )
+
+
+# --- css ---------------------------------------------------------------------
+
+
+@css_app.command("hue-shift")
+def css_hue_shift(
+    paths: Annotated[list[Path], typer.Argument(help="CSS files or directories.")],
+    delta: Annotated[
+        float, typer.Option("--delta", help="Hue rotation in degrees for saturated colours.")
+    ],
+    gray_hue: Annotated[
+        float, typer.Option("--gray-hue", help="Hue used to tint greys (default: warm gold).")
+    ] = 40,
+    white_threshold: Annotated[
+        float, typer.Option("--white-threshold", help="L at/above which a colour is white-ish.")
+    ] = 0.93,
+    black_threshold: Annotated[
+        float, typer.Option("--black-threshold", help="L at/below which a colour is black-ish.")
+    ] = 0.13,
+    write: Annotated[
+        bool,
+        typer.Option(
+            # `--apply` is the workspace's name for "stop previewing and act";
+            # `--write` is kept as an alias so existing invocations survive.
+            "--apply",
+            "--write",
+            help="Actually rewrite the files (default: preview only).",
+        ),
+    ] = False,
+    confirm: Annotated[
+        bool, typer.Option("--confirm-prod-write", help="Confirm the in-place rewrite.")
+    ] = False,
+) -> None:
+    """Rotate every hex colour in a stylesheet while preserving contrast.
+
+    Lightness is left alone for saturated colours — that is what carries
+    contrast. Greys, near-whites and near-blacks are re-tinted instead of
+    rotated, because rotating a neutral either does nothing (pure black/white)
+    or produces a tinted mess.
+
+    Previews by default: the rewrite is **in place** and the originals are not
+    backed up, so ``--apply`` has to be explicit (``--write`` is an alias).
+    """
+    files = css_mod.collect(list(paths))
+    if not files:
+        raise ValidationError("no .css files found under the given paths")
+    shift = css_mod.HueShift(
+        delta=delta,
+        gray_hue=gray_hue,
+        white_threshold=white_threshold,
+        black_threshold=black_threshold,
+    )
+    out = get_output()
+    if write:
+        # Rewriting in place with no backups is a repository write, so it goes
+        # through the same guard everything else does — `--apply` alone should
+        # not be the only thing between a preview and 8 mangled stylesheets.
+        check_write(
+            WriteIntent(
+                consequence=Consequence.REPOSITORY,
+                action=f"rewrite colours in {len(files)} file(s) in place, without backups",
+                target=str(files[0].parent) if files else "?",
+            ),
+            dry_run=False,
+            confirmed=confirm,
+        )
+
+    mapping, changed = css_mod.shift_files(files, shift, write=write)
+    if not write:
+        out.warn(f"preview only: {len(files)} file(s) unchanged — pass --apply to rewrite them")
+    out.result(
+        {
+            "files": len(files),
+            "files_changed": changed if write else 0,
+            "written": write,
+            "colors": dict(sorted(mapping.items())),
+        },
+        human="\n".join(
+            [f"{old} -> {new}" for old, new in sorted(mapping.items())]
+            + [f"{len(mapping)} unique colours across {len(files)} file(s)"]
+        ),
+    )
+
+
+# --- clipboard ---------------------------------------------------------------
+
+
+@mermaid_app.command("render")
+def mermaid_render(
+    target: Annotated[Path, typer.Argument(help="A .md/.mmd file, or a directory of them.")],
+    out_dir: Annotated[
+        Path | None, typer.Option("--out", help="Destination (default: <input dir>/rendered).")
+    ] = None,
+    svg: Annotated[bool, typer.Option("--svg", help="Also emit a transparent SVG.")] = False,
+    confirm: Annotated[
+        bool, typer.Option("--confirm-prod-write", help="Confirm replacing existing images.")
+    ] = False,
+) -> None:
+    """Render Mermaid diagrams to PNG (and optionally SVG).
+
+    Every ```` ```mermaid ```` fence in a Markdown file becomes its own image;
+    a file with several yields ``<base>-01.png``, ``<base>-02.png``, … The
+    system Chrome is reused through a puppeteer config, so mermaid-cli does not
+    download its own 300MB Chromium.
+
+    Writing new images into a fresh ``rendered/`` directory needs no
+    confirmation — nothing is lost. **Replacing** images that already exist
+    does, because several of this repo's committed diagrams are rendered
+    exactly this way and a re-render with a stale source would overwrite them
+    with no trace.
+    """
+    existing = [
+        path for path in mermaid.planned_outputs(target, out_dir=out_dir, svg=svg) if path.is_file()
+    ]
+    if existing:
+        check_write(
+            WriteIntent(
+                consequence=Consequence.REPOSITORY,
+                action=f"overwrite {len(existing)} already-rendered image(s)",
+                target=str(existing[0].parent),
+            ),
+            dry_run=False,
+            confirmed=confirm,
+        )
+    rendered = mermaid.render(target, out_dir=out_dir, svg=svg)
+    get_output().table(
+        [{"source": str(r.source), "output": str(r.output)} for r in rendered],
+        columns=["source", "output"],
+        title=f"{len(rendered)} image(s)",
+    )
+
+
+# --- contable ----------------------------------------------------------------
 
 
 def main() -> None:
