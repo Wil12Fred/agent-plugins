@@ -16,6 +16,7 @@ corrupt the JSON on stdout.
 from __future__ import annotations
 
 import contextvars
+import importlib
 import json
 import sys
 from collections.abc import Callable, Iterable, Mapping, Sequence
@@ -28,6 +29,47 @@ from rich.table import Table
 from opscore.errors import BridgeError
 
 
+def click_command_path() -> str:
+    """The command path Click is currently executing, without the program name.
+
+    ``yourtool logs read`` resolves to ``"logs read"``. Read from the live Click
+    context stack at emit time, because the root callback runs *before* the leaf
+    is bound: a name stamped there is only the group, so every subcommand of a
+    group produces an indistinguishable envelope.
+
+    This is the **default** resolver rather than something each CLI passes,
+    which is the whole point. The seam existed from the start and not one of the
+    four CLIs used it — every envelope they emitted carried ``"command": ""``,
+    including the error envelopes, where knowing which command failed is the
+    entire value. A default cannot be forgotten.
+
+    **Two places to look, and the obvious one is wrong here.** Typer stopped
+    depending on `click` as a separate distribution and now vendors it as
+    ``typer._click``, so `import click` raises `ImportError` inside a perfectly
+    working Typer CLI. A resolver that knew only the top-level name returned
+    "" and looked exactly like "there is no command running" — the failure this
+    function exists to prevent, reintroduced one import line lower down.
+
+    Neither import is a dependency: `opscore` is usable in a library with no CLI
+    at all, and there it returns "" and carries on.
+    """
+    globals_module: Any = None
+    for name in ("click.globals", "typer._click.globals"):
+        try:
+            globals_module = importlib.import_module(name)
+            break
+        except ImportError:
+            continue
+    if globals_module is None:  # pragma: no cover - no CLI framework installed
+        return ""
+    paths = []
+    context = globals_module.get_current_context(silent=True)
+    while context is not None:
+        paths.append(" ".join(context.command_path.split()[1:]))
+        context = context.parent
+    return max(paths, key=len, default="")
+
+
 @dataclass
 class Output:
     """Renderer bound to the current command invocation."""
@@ -35,13 +77,13 @@ class Output:
     json_mode: bool = False
     quiet: bool = False
     command: str = ""
-    command_resolver: Callable[[], str] | None = field(default=None, repr=False)
+    command_resolver: Callable[[], str] | None = field(default=click_command_path, repr=False)
     """Returns the full command path, known only once the subcommand is bound.
 
-    The root callback runs *before* Click resolves the leaf, so ``command`` set
-    there is only the group (``"logs"`` for ``yourtool logs read``) — two different
-    commands then produce indistinguishable envelopes. The CLI injects a
-    resolver that reads the live Click context at emit time instead.
+    Defaults to :func:`click_command_path`, so a CLI gets a correctly named
+    envelope without doing anything. Pass ``None`` to opt out, or another
+    callable to name commands some other way; whatever it returns wins over
+    ``command`` when it is non-empty.
     """
     _stdout: Console = field(default_factory=lambda: Console(), repr=False)
     _stderr: Console = field(default_factory=lambda: Console(stderr=True), repr=False)
@@ -151,7 +193,9 @@ class Output:
         """
         if self.json_mode:
             if not self._emitted:
-                self._emit({"ok": False, "command": self._command_path(), **exc.as_dict()})
+                # The error knows its own command; the context stack does not, by now.
+                named = getattr(exc, "command_path", "") or self._command_path()
+                self._emit({"ok": False, "command": named, **exc.as_dict()})
             else:
                 self.error(exc.message)
             return

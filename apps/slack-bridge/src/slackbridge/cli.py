@@ -625,30 +625,12 @@ WantedBy=default.target
 
 
 def main() -> None:
-    """Entry point. Loads the `.env`, then renders our own errors as messages.
+    """Console-script entry point.
 
-    The `.env` comes first because several options default from the
-    environment, so reading it after parsing would be too late to change them.
-
-    The exception handler is the other half, and it is not cosmetic. Without it
-    a missing `tmux` — or a missing channel id — reaches the terminal as a
-    syntax-highlighted traceback pointing at `cli.py`, which reads as *this tool
-    is broken* rather than *you need to install something*. Our own errors carry
-    the message, the fix and an exit code; anything else is a real bug and keeps
-    its traceback.
+    The shared runner loads the `.env`, renders our own errors as one envelope,
+    and answers a *usage* error under ``--json`` instead of letting Click write
+    to stderr and leave stdout empty. See :mod:`opscore.cli`.
     """
-    from opscore.env import load_env_file
-    from opscore.errors import BridgeError
+    from opscore.cli import run
 
-    load_env_file()
-    try:
-        app()
-    except BridgeError as exc:
-        get_output().failure(exc)
-        raise SystemExit(exc.exit_code) from None
-    except KeyboardInterrupt:  # pragma: no cover - interactive only
-        raise SystemExit(130) from None
-
-
-if __name__ == "__main__":  # pragma: no cover
-    main()
+    run(app)

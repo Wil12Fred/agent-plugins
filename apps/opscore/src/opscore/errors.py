@@ -8,6 +8,18 @@ from "you tried to write to prod without confirming" (5).
 from __future__ import annotations
 
 
+def _command_path_now() -> str:
+    """The running command's path, or "" outside a CLI.
+
+    Imported lazily so `opscore.errors` stays importable in a library with no
+    CLI framework installed, and so this module does not import `output` at
+    module scope (which imports it back).
+    """
+    from opscore.output import click_command_path
+
+    return click_command_path()
+
+
 class BridgeError(Exception):
     """Base class for every expected, reportable failure."""
 
@@ -17,6 +29,17 @@ class BridgeError(Exception):
         super().__init__(message)
         self.message = message
         self.detail = detail
+        self.command_path = _command_path_now()
+        """Which command was running when this was raised.
+
+        Recorded here, at construction, because that is the only moment it is
+        knowable. An error is raised *inside* the command body, where Click's
+        context stack is live; by the time the entry point catches it the stack
+        has unwound, so the renderer asking "which command am I in?" is asking
+        after the answer is gone. That produced envelopes where the success path
+        named the command and the failure path did not — and the failure path is
+        the one where a caller needs the name.
+        """
 
     def as_dict(self) -> dict[str, object]:
         payload: dict[str, object] = {"error": type(self).__name__, "message": self.message}
