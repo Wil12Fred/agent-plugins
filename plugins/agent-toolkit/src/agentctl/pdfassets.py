@@ -90,7 +90,7 @@ def _run(command: list[str], *, keep_going: bool) -> None:
     if completed.returncode != 0 and not keep_going:
         raise ApiError(
             f"{Path(command[0]).name} failed",
-            body=completed.stderr.strip()[:400] or None,
+            detail=completed.stderr.strip()[:400] or None,
         )
 
 
@@ -130,7 +130,7 @@ def page_count(pdf: Path) -> int:
     for line in completed.stdout.splitlines():
         if line.startswith("Pages:"):
             return int(line.split(":", 1)[1].strip())
-    raise ApiError("pdfinfo did not report a page count", body=completed.stderr[:200] or None)
+    raise ApiError("pdfinfo did not report a page count", detail=completed.stderr[:200] or None)
 
 
 def _extract_pages(

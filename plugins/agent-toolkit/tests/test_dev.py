@@ -18,7 +18,6 @@ import pytest
 from agentctl import css, svgsprite
 from agentctl.errors import ValidationError
 
-
 # --------------------------------------------------------------------------- #
 # Hue shifting
 # --------------------------------------------------------------------------- #
