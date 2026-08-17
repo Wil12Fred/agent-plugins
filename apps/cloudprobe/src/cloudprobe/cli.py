@@ -162,8 +162,12 @@ def k8s_diagram(
     diagram cannot drift from reality — regenerating it is the only way it
     changes. Only secret NAMES are read.
     """
-    parsed = k8s.load(chart, values)
-    document = k8s.render(parsed, chart_dir=chart, values_name=values)
+    # Resolve once and hand the SAME path to both. Passing the raw option to
+    # `render` meant a chart supplied through the environment was read
+    # correctly and then reported as `<chart>`.
+    resolved = k8s.resolve_chart(chart)
+    parsed = k8s.load(resolved, values)
+    document = k8s.render(parsed, chart_dir=resolved, values_name=values)
 
     target = out or (project_root() / "docs/diagrams/k8s-architecture.md")
     if not check_write(
