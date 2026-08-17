@@ -12,7 +12,7 @@ plugins/agent-toolkit/     a Claude Code plugin
 ├── src/agentctl/          the CLI and the MCP server
 ├── skills/                5 skills — SKILL.md, so Claude Code, Codex, Gemini and Cursor all read them
 ├── agents/                2 subagents — Claude Code only
-└── tests/                 68 tests
+└── tests/                 82 tests
 
 plugins/workstation/       a Claude Code plugin
 └── skills/                2 skills — this Arch/KDE machine's own operations
@@ -26,10 +26,10 @@ apps/                      services and CLIs, sharing `opscore`
 
 | Package | Tests |
 |---|---|
-| `plugins/agent-toolkit` | 39 |
+| `plugins/agent-toolkit` | 82 |
 | `apps/slack-bridge` | 68 unit + 10 e2e |
 | `apps/cloudprobe` | 72 |
-| `apps/opscore` | 39 |
+| `apps/opscore` | 49 |
 | `apps/gpull` | 10 |
 | `apps/jiractl` | 22 + 4 integration |
 
@@ -44,6 +44,7 @@ uvx --from plugins/agent-toolkit agentctl --help
 | Command | Answers |
 |---|---|
 | `agentctl detect [path]` | which practices this repository has adopted, each with the paths that prove it |
+| `agentctl rules [path]` | which rules this repository declared for **itself** — scope, exceptions, and with `--check` the ones that can be measured, plus the count of files each weighed |
 | `agentctl strays [path]` | which executables sit outside the code directory, and which are declared exceptions rather than nobody's decision. Exits 7 when anything is undeclared |
 | `agentctl clipboard copy` | put text on the clipboard **and verify it landed** |
 | `agentctl android …` | boot a headless emulator, screenshot it, tap, type, read logcat, install an APK |
@@ -54,8 +55,8 @@ Every command takes `--json` and answers with exactly one envelope, so a script
 gets structured output and a meaningful exit code from the same binary a person
 reads.
 
-**The MCP server is read-only, and only two commands are on it.** `detect` and
-`strays` read a repository and nothing else, so there is no `--allow-writes` to
+**The MCP server is read-only, and only three commands are on it.** `detect`,
+`rules` and `strays` read a repository and nothing else, so there is no `--allow-writes` to
 grant — a stronger property than a guarded write and a cheaper one to verify.
 `android tap` and `android text` obviously *do* act on a device, which is why
 they are CLI-only: an agent that can type into a phone is a different trust
@@ -84,6 +85,42 @@ code roots: .
 
 3 adopted, 3 not applicable
 ```
+
+### Why `rules` exists
+
+`detect` answers what a repository has *adopted*. `rules` answers what it has
+*decided*, and no directory listing reveals that. "Every identifier and comment
+is English, except text quoted into a ticket or a chat message" is a decision
+somebody made; until it is declared, an auditor audits against its own defaults
+instead of the project's.
+
+```toml
+# .agent-rules.toml
+[[rule]]
+name = "english-everywhere"
+kind = "language"
+expect = "english"
+rule = "Comments, docstrings and identifiers are English."
+exempt = ["specs/**", "**/jira-*.md", "**/slack-*.md"]
+why = "Reviewers do not share one first language; quoted ticket text keeps its own."
+```
+
+Three properties it is built around, each one a way this normally goes wrong:
+
+- **An exception is part of the rule.** `exempt` wins over `applies_to`, because
+  an exception is written to carve something out; resolving the overlap the
+  other way makes every exception silently inert.
+- **`checked: 0` is not a pass.** Every run reports how many files each rule
+  actually weighed. Without that number, "no violations" over an empty set looks
+  exactly like a clean repository.
+- **What cannot be measured is named, not skipped.** A `naming` or `process`
+  rule is returned as text with its scope, and listed under `unmeasurable`, so
+  the auditor reads it by hand instead of inheriting a silent pass.
+
+Only `language` is measured today, by word frequency over **comments and
+docstrings** — not identifiers, where keywords and library names dominate the
+ratio and report a thoroughly Spanish file as English. Files with too little
+text return a third answer, *not enough to judge*, distinct from both verdicts.
 
 ### Why `android` is here
 
@@ -194,7 +231,7 @@ and other agents have their own mechanisms.
 
 | | |
 |---|---|
-| `@agent-repo-auditor` | audits a repository against the rules **it** wrote for itself, after detecting which of those rules it actually adopted. `permissionMode: plan` — reports, never edits |
+| `@agent-repo-auditor` | audits a repository against the rules **it** declared for itself — read from its own `.agent-rules.toml` and prose — after detecting which practices it actually adopted. `permissionMode: plan` — reports, never edits |
 | `@agent-research-analyst` | evaluates external tooling by cloning and reading it. Never installs, never executes a candidate |
 
 ---
@@ -237,7 +274,7 @@ rather than a dependency: the Klipper path needs nothing at all.
 One gate over all six packages:
 
 ```bash
-make check          # lint + typecheck + tests + plugin manifests — 279 tests
+make check          # lint + typecheck + tests + plugin manifests — 303 tests
 make integration    # the suites that touch this machine and the network
 make fmt            # ruff format + fix
 ```

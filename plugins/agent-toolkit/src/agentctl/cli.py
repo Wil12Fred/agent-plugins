@@ -27,6 +27,7 @@ import typer
 
 from agentctl import css, mermaid, pdfassets, svgsprite
 from agentctl import detect as detect_module
+from agentctl import rules as rules_module
 from agentctl import strays as strays_module
 from agentctl.errors import ValidationError
 
@@ -78,6 +79,69 @@ def detect_command(
     lines.append("")
     lines.append(f"{len(result.adopted)} adopted, {len(result.not_adopted)} not applicable")
     _emit(result.as_dict(), as_json=as_json, human="\n".join(lines))
+
+
+@app.command("rules")
+def rules_command(
+    path: Annotated[Path, typer.Argument(help="Repository to inspect.")] = Path("."),
+    as_json: Annotated[bool, typer.Option("--json", help="Emit the JSON envelope.")] = False,
+    check: Annotated[
+        bool, typer.Option("--check", help="Measure the checkable rules, not only list them.")
+    ] = False,
+) -> None:
+    """Report the rules this repository declared for itself.
+
+    `detect` answers what practices a repository has *adopted*; this answers what
+    it has *decided*. They are different questions, and only the second can carry
+    something like "every identifier and comment is English, except text quoted
+    into a ticket" — a rule no directory listing reveals.
+
+    Rules come from `.agent-rules.toml`. Prose documents that carry rules
+    informally (`AGENTS.md`, a constitution, `CONTRIBUTING.md`) are listed
+    separately, to be **read** rather than parsed: inventing a structured rule
+    out of prose is how an auditor ends up enforcing something nobody wrote.
+
+    With `--check` the measurable rules are measured, and the count of files each
+    one weighed is reported alongside. That count is the point — "no violations"
+    over zero files is not a pass, and without the number the two are
+    indistinguishable.
+
+    Exits 7 when `--check` finds a violation.
+    """
+    declaration = rules_module.load(path)
+
+    lines = [str(path.resolve())]
+    if declaration.declaration_file:
+        lines.append(f"declared in: {declaration.declaration_file}")
+    else:
+        lines.append("declared in: nothing — this repository has not been given rules")
+    lines.append("")
+    for rule in declaration.rules:
+        mark = "measurable" if rule.checkable else "read-only"
+        lines.append(f"  [{mark}] {rule.name} ({rule.kind}) — {rule.rule}")
+        if rule.exempt:
+            lines.append(f"             except: {', '.join(rule.exempt)}")
+    if declaration.prose_sources:
+        lines.append("")
+        lines.append(f"  prose to read: {', '.join(declaration.prose_sources)}")
+
+    payload = declaration.as_dict()
+    if check:
+        result = rules_module.check(path, declaration)
+        payload["check"] = result.as_dict()
+        lines.append("")
+        for name, count in result.checked.items():
+            lines.append(f"  {name}: {count} file(s) weighed")
+        for name in result.unmeasurable:
+            lines.append(f"  {name}: not measurable by this tool — read it")
+        for violation in result.violations:
+            lines.append(f"  ! {violation.path}: {violation.detail}")
+        _emit(payload, as_json=as_json, human="\n".join(lines))
+        if result.violations:
+            raise typer.Exit(7)
+        return
+
+    _emit(payload, as_json=as_json, human="\n".join(lines))
 
 
 @app.command("strays")
