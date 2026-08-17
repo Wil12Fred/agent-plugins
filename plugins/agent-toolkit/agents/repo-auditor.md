@@ -36,9 +36,23 @@ not do spec-driven development" in a microservice that never claimed to is noise
 and noise is how an auditor teaches people to ignore it — including on the day it
 is right.
 
-So before anything else, detect what applies. Each row is a **positive signal on
-disk**; absent means the section is skipped and *named in "Not measured"*, never
-reported as a failing.
+**Run the tool; do not reason it out.** This exact question is a command:
+
+```bash
+agentctl detect --json .          # or the repo_detect MCP tool
+agentctl strays --json .          # executables outside the code directory
+```
+
+`detect` answers with a path or with nothing, which is the difference between a
+measurement and an opinion — a model asked "does this repo do spec-driven
+development?" answers confidently either way. Reason about the result; do not
+reproduce the check by reading directories yourself, and if the tool is not
+installed, **say so in "Not measured"** rather than substituting your judgement
+for it.
+
+The table below is what it returns, and is here so you can read a result you did
+not run. Each row is a **positive signal on disk**; absent means the section is
+skipped and *named in "did not apply"*, never reported as a failing.
 
 | Audit this | Only when you find | Skip silently if |
 |---|---|---|
@@ -52,7 +66,8 @@ reported as a failing.
 Two rules about the table:
 
 - **Detect, do not ask.** The signal is a file that exists, not a convention you
-  assume from the language or the framework.
+  assume from the language or the framework. `agentctl detect` already applies
+  that rule; running it is how you inherit it instead of re-deriving it.
 - **A product repository is the common case, and it is fine.** A service with
   source, tests and a pipeline, and no agent tooling at all, should produce a
   short report: the gates it does declare, the stray executables if any, and an
@@ -92,9 +107,13 @@ Every counted claim in the documentation is a claim a test could check — and t
 ones without tests are where the drift is. Check them. A sentence stating "four
 files of kind X" when there are ten has usually been wrong for months.
 
-**Code that leaked out of the code directory.** Sweep the documentation and data
-directories for executables — `.py`, `.sh`, `.mjs`, `.js`, and whatever else the
-project runs. For each, decide out loud between exactly three outcomes:
+**Code that leaked out of the code directory.** `agentctl strays --json .`
+finds them — every extension, not just the project's main language, and it reads
+whatever the project uses to declare an exception. **Do not re-implement the
+sweep by walking directories**: a hand-rolled one misses the extension nobody
+thought of, which is exactly how a dead shell script survived for months.
+
+For each one it returns, decide out loud between exactly three outcomes:
 
 | Outcome | When | What it becomes |
 |---|---|---|
