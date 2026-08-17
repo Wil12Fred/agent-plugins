@@ -30,6 +30,7 @@ apps/                      services and CLIs, sharing `opscore`
 | `apps/slack-bridge` | 68 unit + 10 e2e |
 | `apps/cloudprobe` | 72 |
 | `apps/gpull` | 10 |
+| `apps/jiractl` | 22 + 4 integration |
 
 ---
 
@@ -133,6 +134,12 @@ produce an error, it produces an answer.
 
 **[`gpull`](apps/gpull)** — the two Google things the APIs make awkward:
 exporting a private Sheet and downloading a Gmail attachment's bytes.
+
+**[`jiractl`](apps/jiractl)** — JIRA Cloud, with the part that is actually hard:
+its comment API takes **ADF**, a nested document tree, not text. Write markdown,
+get headings, tables, code blocks and resolved `@mentions`. It also does the
+obscure one — embedding an attachment *inside* a comment needs a media id that
+is not in the upload response.
 
 ## The Slack bridge
 
