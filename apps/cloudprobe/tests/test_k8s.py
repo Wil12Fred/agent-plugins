@@ -143,3 +143,59 @@ def test_outside_a_repository_the_header_says_unknown_rather_than_guessing(tmp_p
 
     assert k8s.chart_commit(chart) is None
     assert "revision unknown" in header
+
+
+def test_a_chart_from_the_environment_is_named_in_the_header(tmp_path, monkeypatch) -> None:
+    """Rule: the document must name the chart it actually read.
+
+    `load()` resolved the environment default and `render()` received the raw
+    option, so a chart supplied through `CLOUDPROBE_CHART` was read correctly
+    and then written up as `<chart>` — the report disagreeing with the work.
+    Driven through the environment rather than the option, because the option
+    path was the one that already worked.
+    """
+    from cloudprobe import k8s
+
+    chart = tmp_path / "named-chart"
+    chart.mkdir()
+    monkeypatch.setenv(k8s.CHART_VAR, str(chart))
+
+    header = k8s.render(k8s.Chart(), chart_dir=k8s.resolve_chart(None), values_name="values.yaml")
+
+    assert "named-chart/values.yaml" in header
+    assert "<chart>" not in header
+
+
+def test_the_environment_is_read_when_the_command_runs_not_when_it_imports(
+    tmp_path, monkeypatch
+) -> None:
+    """The control for the above, and a separate defect.
+
+    The default used to be a module constant evaluated at import. A variable the
+    entry point exports afterwards could never reach it, so the tool looked
+    configurable while being fixed. This sets the variable after the module is
+    already imported — which it is, at the top of this file.
+    """
+    from cloudprobe import k8s
+
+    monkeypatch.delenv(k8s.CHART_VAR, raising=False)
+    later = tmp_path / "set-after-import"
+    later.mkdir()
+    monkeypatch.setenv(k8s.CHART_VAR, str(later))
+
+    assert k8s.resolve_chart(None) == later
+
+
+def test_with_no_chart_anywhere_it_refuses_and_names_the_variable(monkeypatch) -> None:
+    from opscore.errors import ConfigError
+
+    from cloudprobe import k8s
+
+    monkeypatch.delenv(k8s.CHART_VAR, raising=False)
+
+    try:
+        k8s.resolve_chart(None)
+    except ConfigError as exc:
+        assert k8s.CHART_VAR in str(exc)
+    else:  # pragma: no cover - the refusal is the point
+        raise AssertionError("a missing chart must refuse, not guess")
