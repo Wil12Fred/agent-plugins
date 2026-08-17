@@ -12,7 +12,7 @@ plugins/agent-toolkit/     a Claude Code plugin
 ├── src/agentctl/          the CLI and the MCP server
 ├── skills/                5 skills — SKILL.md, so Claude Code, Codex, Gemini and Cursor all read them
 ├── agents/                2 subagents — Claude Code only
-└── tests/                 82 tests
+└── tests/                 98 tests
 
 plugins/workstation/       a Claude Code plugin
 └── skills/                2 skills — this Arch/KDE machine's own operations
@@ -26,7 +26,7 @@ apps/                      services and CLIs, sharing `opscore`
 
 | Package | Tests |
 |---|---|
-| `plugins/agent-toolkit` | 82 |
+| `plugins/agent-toolkit` | 98 |
 | `apps/slack-bridge` | 68 unit + 10 e2e |
 | `apps/cloudprobe` | 72 |
 | `apps/opscore` | 49 |
@@ -45,6 +45,7 @@ uvx --from plugins/agent-toolkit agentctl --help
 |---|---|
 | `agentctl detect [path]` | which practices this repository has adopted, each with the paths that prove it |
 | `agentctl rules [path]` | which rules this repository declared for **itself** — scope, exceptions, and with `--check` the ones that can be measured, plus the count of files each weighed |
+| `agentctl portable [path]` | which code is **not** about this project and could move to a shared repo — with `--target`, which of it is already there and was copied rather than moved. Exits 7 on a duplicate |
 | `agentctl strays [path]` | which executables sit outside the code directory, and which are declared exceptions rather than nobody's decision. Exits 7 when anything is undeclared |
 | `agentctl clipboard copy` | put text on the clipboard **and verify it landed** |
 | `agentctl android …` | boot a headless emulator, screenshot it, tap, type, read logcat, install an APK |
@@ -55,8 +56,8 @@ Every command takes `--json` and answers with exactly one envelope, so a script
 gets structured output and a meaningful exit code from the same binary a person
 reads.
 
-**The MCP server is read-only, and only three commands are on it.** `detect`,
-`rules` and `strays` read a repository and nothing else, so there is no `--allow-writes` to
+**The MCP server is read-only, and only four commands are on it.** `detect`,
+`rules`, `portable` and `strays` read a repository and nothing else, so there is no `--allow-writes` to
 grant — a stronger property than a guarded write and a cheaper one to verify.
 `android tap` and `android text` obviously *do* act on a device, which is why
 they are CLI-only: an agent that can type into a phone is a different trust
@@ -85,6 +86,50 @@ code roots: .
 
 3 adopted, 3 not applicable
 ```
+
+### Why `portable` exists
+
+A repository accumulates two kinds of code and stops telling them apart. Some
+encodes what the business does; the rest is mechanism — a screenshot driver, a
+parallelism calculator, a git hook — that would work anywhere. The second kind
+is invisible, because it lives in the same directories as the first and nobody
+re-reads a helper that already works.
+
+```
+$ agentctl portable . --target ~/src/shared --expect-language english
+
+measured against 24 project term(s) from .agent-rules.toml
+201 code file(s) weighed, 48 candidate(s)
+
+  [DUPLICATE] src/jira/adf.py  (407 lines)
+      already in the target as apps/jiractl/src/jiractl/adf.py
+  [portable ] tools/shot.mjs  (121 lines)
+  [after-edit] tools/lib/launch.mjs  (31 lines)
+      comments read as spanish; the target repository requires english
+```
+
+The test is mechanical: how many of a file's lines name the project, using the
+vocabulary declared in `.agent-rules.toml`. "Does this feel reusable?" gets a
+confident answer either way; "how many of these 121 lines name the company" has
+one answer and a reader who disagrees can go and count.
+
+**The duplicates are the point.** Extraction by copying instead of moving fails
+*silently* — both copies work, so nothing breaks, and the divergence surfaces
+when a fix made in one does not reach the other. Getting that check right took
+three passes, each defeated by a real file:
+
+- **imports are excluded from the hash**, because a copy is repointed at the new
+  namespace on its way out;
+- **docstrings and comments are excluded too**, because taking the project's
+  name out of the prose is the whole point of extracting it — one 407-line
+  module was identical in every statement and differed in two docstring lines;
+- **a duplicate bypasses the portability threshold**, because the copy left
+  behind keeps accreting project references. The more diverged it is, the more
+  important the finding, and the more certainly a threshold drops it.
+
+Import lines are also counted apart from a file's substance in the report, since
+they are a rename rather than a rewrite: "6 mentions" for a file needing one
+mechanical edit reads like a file nobody should touch.
 
 ### Why `rules` exists
 
@@ -274,7 +319,7 @@ rather than a dependency: the Klipper path needs nothing at all.
 One gate over all six packages:
 
 ```bash
-make check          # lint + typecheck + tests + plugin manifests — 303 tests
+make check          # lint + typecheck + tests + plugin manifests — 322 tests
 make integration    # the suites that touch this machine and the network
 make fmt            # ruff format + fix
 ```

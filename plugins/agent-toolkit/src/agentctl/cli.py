@@ -24,12 +24,14 @@ from pathlib import Path
 from typing import Annotated, Any
 
 import typer
+from typer import _click as click
 
 from agentctl import css, mermaid, pdfassets, svgsprite
 from agentctl import detect as detect_module
+from agentctl import portable as portable_module
 from agentctl import rules as rules_module
 from agentctl import strays as strays_module
-from agentctl.errors import ValidationError
+from agentctl.errors import AgentctlError, ValidationError
 
 app = typer.Typer(
     name="agentctl",
@@ -142,6 +144,64 @@ def rules_command(
         return
 
     _emit(payload, as_json=as_json, human="\n".join(lines))
+
+
+@app.command("portable")
+def portable_command(
+    path: Annotated[Path, typer.Argument(help="Repository to sweep.")] = Path("."),
+    target: Annotated[
+        Path | None,
+        typer.Option("--target", help="Checkout of the shared repository, to detect duplicates."),
+    ] = None,
+    expect_language: Annotated[
+        str | None,
+        typer.Option("--expect-language", help="Language the target requires, e.g. english."),
+    ] = None,
+    exclude: Annotated[
+        list[str] | None,
+        typer.Option("--exclude", help="Glob to skip, for already-extracted trees. Repeatable."),
+    ] = None,
+    as_json: Annotated[bool, typer.Option("--json", help="Emit the JSON envelope.")] = False,
+) -> None:
+    """Find code that is not about this project, so it can be shared instead of rewritten.
+
+    A repository accumulates two kinds of code and stops telling them apart:
+    what the business does, and mechanism that would work anywhere. The second
+    is invisible because it lives in the same directories as the first and
+    nobody re-reads a helper that already works.
+
+    The test is mechanical, not editorial — how many of a file's lines mention
+    the project, using the vocabulary declared in `.agent-rules.toml`. "Does
+    this feel reusable?" is a question that gets a confident answer either way;
+    "how many of these 121 lines name the company" has one answer, and a reader
+    who disagrees can open the file and count.
+
+    Pass `--target` at a checkout of the shared repository and anything already
+    there is reported as a **duplicate**, ranked above every opportunity.
+    Extraction by copying instead of moving is the half that goes wrong, and it
+    goes wrong silently: both copies work, so nothing fails, and the divergence
+    surfaces when a fix in one does not appear in the other.
+
+    Exits 7 when a duplicate is found. Opportunities alone exit 0 — they are
+    not defects and should not fail anybody's pipeline.
+    """
+    result = portable_module.survey(
+        path,
+        target=target,
+        expect_language=expect_language,
+        exclude=exclude or (),
+    )
+    header = [
+        f"{path.resolve()}",
+        f"measured against {len(result.vocabulary.terms)} project term(s) "
+        f"from {result.vocabulary.source}",
+        f"{result.scanned} code file(s) weighed, {len(result.candidates)} candidate(s)",
+        "",
+    ]
+    body = portable_module.summarise(result.candidates) or ["  nothing portable found"]
+    _emit(result.as_dict(), as_json=as_json, human="\n".join(header + body))
+    if result.duplicates:
+        raise typer.Exit(7)
 
 
 @app.command("strays")
@@ -525,10 +585,37 @@ def mermaid_render(
 
 
 def main() -> None:
+    """Console-script entry point: dispatch, then render our own failures.
+
+    Without the `AgentctlError` arm a refusal reaches the terminal as a
+    syntax-highlighted traceback pointing at this file, which reads as *this
+    tool is broken* rather than *configure it*. `agentctl portable` on a
+    repository with no declared vocabulary did exactly that, and its message
+    already said precisely what to add.
+
+    `standalone_mode=False` is the other half: Click otherwise handles a usage
+    error itself, printing to stderr and exiting 2 with an **empty stdout** —
+    under `--json` too, so a caller parsing stdout cannot tell a mistyped flag
+    from a crash.
+
+    Anything that is not ours keeps its traceback. Swallowing a real bug into a
+    tidy message is how a crash gets reported as a configuration problem.
+    """
     try:
-        app()
+        app(standalone_mode=False)
+    except AgentctlError as exc:
+        typer.secho(f"error {exc}", err=True, fg=typer.colors.RED)
+        sys.exit(exc.exit_code)
     except KeyboardInterrupt:  # pragma: no cover - interactive only
         sys.exit(130)
+    except click.exceptions.Abort:  # pragma: no cover - interactive only
+        sys.exit(130)
+    except click.exceptions.Exit as exc:
+        sys.exit(exc.exit_code)
+    except click.exceptions.ClickException as exc:
+        typer.secho(f"error {exc.format_message()}", err=True, fg=typer.colors.RED)
+        typer.secho("run with --help for the usage", err=True)
+        sys.exit(2)
 
 
 if __name__ == "__main__":  # pragma: no cover

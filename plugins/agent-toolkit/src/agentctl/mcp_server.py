@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any
 
 from agentctl import detect as detect_module
+from agentctl import portable as portable_module
 from agentctl import rules as rules_module
 from agentctl import strays as strays_module
 
@@ -48,6 +49,39 @@ TOOLS: tuple[dict[str, Any], ...] = (
                     "type": "array",
                     "items": {"type": "string"},
                     "description": "Restrict to these practice names.",
+                },
+            },
+        },
+    },
+    {
+        "name": "repo_portable",
+        "description": (
+            "Find code in a repository that is NOT about its project — mechanism that would "
+            "work anywhere and could move to a shared repository instead of being rewritten "
+            "in the next project. Measured mechanically: how many of a file's lines mention "
+            "the project vocabulary declared in .agent-rules.toml, counting import lines "
+            "separately because those are a rename rather than a rewrite. Pass `target` at a "
+            "checkout of the shared repo and anything already there is returned as a "
+            "DUPLICATE — a defect, ranked first, because extraction-by-copying fails "
+            "silently (both copies work; the divergence appears when a fix reaches only "
+            "one). Returns scanned so an empty result cannot be mistaken for a clean repo."
+        ),
+        "schema": {
+            "type": "object",
+            "properties": {
+                "root": _ROOT_PROPERTY,
+                "target": {
+                    "type": "string",
+                    "description": "Checkout of the shared repository, to detect duplicates.",
+                },
+                "expect_language": {
+                    "type": "string",
+                    "description": "Language the shared repository requires, e.g. english.",
+                },
+                "exclude": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Globs to skip, for already-extracted trees.",
                 },
             },
         },
@@ -124,6 +158,17 @@ def _call(name: str, arguments: dict[str, Any], default_root: Path) -> tuple[str
         if arguments.get("check"):
             payload["check"] = rules_module.check(root, declaration).as_dict()
         return json.dumps({"ok": True, "data": payload}, indent=2), False
+
+    if name == "repo_portable":
+        raw_target = arguments.get("target")
+        exclude = arguments.get("exclude")
+        result = portable_module.survey(
+            root,
+            target=Path(raw_target).expanduser() if isinstance(raw_target, str) and raw_target else None,
+            expect_language=arguments.get("expect_language") or None,
+            exclude=exclude if isinstance(exclude, list) else (),
+        )
+        return json.dumps({"ok": True, "data": result.as_dict()}, indent=2), False
 
     if name == "repo_strays":
         if not detect_module.code_roots(root):
