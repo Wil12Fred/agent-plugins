@@ -188,7 +188,53 @@ the real refs and report every row that has drifted. A stale local clone measure
 your disk — record which remote answered, and treat an answer from a remote the
 project has migrated away from as **unverified** rather than measured.
 
-### 4. What is missing
+### 4. Code that is not about this project
+
+**A repository accumulates two kinds of code and stops telling them apart.**
+Some of it encodes what the business does. The rest is mechanism — a screenshot
+driver, a parallelism calculator, a git hook enforcing a branch direction — that
+would work anywhere and is invisible, because it sits in the same directories as
+the domain code and nobody re-reads a helper that already works.
+
+```bash
+agentctl portable --json . \
+  --target ~/path/to/shared-repo \
+  --expect-language english \
+  --exclude 'already-extracted/**'
+```
+
+Do not reason this out from directory names. The command answers with a count
+of project-mentioning lines per file, measured against the vocabulary the
+repository declared for itself; "does this feel reusable?" gets a confident
+answer either way, and this does not.
+
+Report it in **two separate groups**, and never merge them:
+
+- **`duplicate` — a defect, and it goes in your findings, ranked.** The file
+  already exists in the shared repository. Extraction by copying instead of
+  moving fails *silently*: both copies work, so nothing breaks, and the
+  divergence only surfaces when a fix made in one does not appear in the other.
+  Say which copy is live where you can tell — a symlink or an install may point
+  at the one that was supposed to disappear, in which case every fix made in the
+  shared repo has been reaching nobody.
+- **`portable` / `portable-after-edit` — an opportunity, and it goes in its own
+  section.** These are not defects and must not be ranked among them. Give the
+  path, the size, and what blocks it: `N import lines to rename` is mechanical;
+  a language note means translation has to happen *before* the move, or the
+  receiving repository is in violation the day it lands.
+
+Three things to carry into the report rather than summarise away:
+
+- **Quote `scanned`.** A short list over a large scan is a real finding; the
+  same list over a scan of four files is not, and they read identically.
+- **Say what is in flight.** A file somebody is editing right now must be named
+  as blocked on that, not listed as ready. Moving a file mid-edit is how work
+  gets mixed even with perfect `git` discipline.
+- **If nothing is declared, say so and stop.** With no vocabulary the tool
+  refuses rather than reporting the whole repository as reusable. Repeat the
+  refusal; do not substitute your own guess at which words are proper nouns.
+
+### 5. What is missing
 
 Where a skill, subagent or command should exist and does not. For external
 candidates, do not evaluate them yourself — that is `research-analyst`, and it
@@ -211,7 +257,8 @@ decides what lands.
      resolved-but-still-recorded | newly stale | unchanged
 ## 1. Findings, most severe first
      what, where (file:line), the evidence, the severity, the fix
-## 2. Coverage gaps
+## 2. Portable to the shared repository (opportunities, not defects)
+## 2b. Coverage gaps
 ## 3. Redundancy
 ## 4. Not measured, and why    <- mandatory
 ## 5. Apply
