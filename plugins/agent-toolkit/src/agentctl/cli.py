@@ -26,7 +26,7 @@ from typing import Annotated, Any
 import typer
 from typer import _click as click
 
-from agentctl import css, htmlpdf, mermaid, pdfassets, pptxdeck, svgsprite
+from agentctl import css, htmlpdf, mermaid, pdfassets, pptxdeck, pptxlayout, svgsprite
 from agentctl import detect as detect_module
 from agentctl import portable as portable_module
 from agentctl import rules as rules_module
@@ -800,6 +800,55 @@ def pptx_replace_image(
         as_json=as_json,
         human=f"{result['replaced']} ← {image} ({result['bytes']} bytes) → {out}",
     )
+
+
+@pptx_app.command("html")
+def pptx_html(
+    deck: Annotated[Path, typer.Argument(help="Source .pptx (read-only).")],
+    out_dir: Annotated[Path, typer.Option("--out-dir", help="Destination folder.")],
+    title: Annotated[str | None, typer.Option("--title", help="Page title.")] = None,
+    max_width: Annotated[
+        int, typer.Option("--max-width", help="Shrink images wider than this. 0 = native.")
+    ] = 1600,
+    overwrite: Annotated[
+        bool, typer.Option("--overwrite", help="Replace the contents of a non-empty folder.")
+    ] = False,
+    as_json: Annotated[bool, typer.Option("--json", help="Emit the JSON envelope.")] = False,
+) -> None:
+    """Lay the deck out as HTML — one page per slide, shapes where the slide puts them.
+
+    `export` gives a deck's content; this gives its *arrangement*. For a review
+    deck, where the message is *this* annotation pointing at *that* screenshot,
+    the arrangement is the content, and a list of paragraphs loses it.
+
+    **No LibreOffice.** Every shape records its own offset and extent in EMU, so
+    placing them is unit conversion rather than layout — pictures, text with its
+    per-run size and colour, the connectors a reviewer points with, groups, and
+    the background inherited from the layout or master.
+
+    It is an approximation and names its own limits: tables, charts and SmartArt
+    are drawn as a labelled outline rather than dropped, and the count comes back
+    in the result. Text reflow and placeholder inheritance are the parts a real
+    engine does and this does not, so a text box can overflow where PowerPoint
+    would have shrunk it.
+
+    Pair with `dev pdf from-html` to get a PDF; the `@page` size is already set to
+    the slide, so one slide is one page.
+    """
+    result = pptxlayout.build(
+        deck, out_dir, title=title, max_width=max_width, overwrite=overwrite
+    )
+    approximated = result["approximated"]
+    page = result["slide_pt"]
+    size = f"{page[0]}×{page[1]}pt" if isinstance(page, list) else "unknown"
+    human = (
+        f"{result['slides']} slide(s), {result['shapes']} shape(s), {result['images']} image(s) "
+        f"→ {out_dir}\n  page {size}"
+    )
+    if isinstance(approximated, list) and approximated:
+        names = ", ".join(approximated)
+        human += f"\n  drawn as an outline ({result['approximated_count']}): {names}"
+    _emit(result, as_json=as_json, human=human)
 
 
 @pptx_app.command("pdf")
