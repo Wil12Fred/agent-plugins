@@ -581,6 +581,74 @@ def pptx_extract(
     )
 
 
+@pptx_app.command("export")
+def pptx_export(
+    deck: Annotated[Path, typer.Argument(help="Source .pptx (read-only).")],
+    out_dir: Annotated[Path, typer.Option("--out-dir", help="Destination folder.")],
+    title: Annotated[
+        str | None, typer.Option("--title", help="H1 for index.md (default: deck stem).")
+    ] = None,
+    prefix: Annotated[
+        str | None, typer.Option("--prefix", help="Image filename prefix (default: deck stem).")
+    ] = None,
+    max_width: Annotated[
+        int, typer.Option("--max-width", help="Shrink images wider than this. 0 = keep native.")
+    ] = 0,
+    colors: Annotated[
+        int, typer.Option("--colors", help="Quantize to N colours (e.g. 256). 0 = leave alone.")
+    ] = 0,
+    include_media: Annotated[
+        bool, typer.Option("--include-media", help="Also write video and other non-image parts.")
+    ] = False,
+    overwrite: Annotated[
+        bool, typer.Option("--overwrite", help="Replace the contents of a non-empty folder.")
+    ] = False,
+    as_json: Annotated[bool, typer.Option("--json", help="Emit the JSON envelope.")] = False,
+) -> None:
+    """Turn a deck into a readable folder: `index.md`, `images/`, `manifest.csv`.
+
+    A `.pptx` is a delivery format and a terrible archive format — opaque to
+    grep, to review and to any diff. This writes the same content as markdown
+    with the images beside it, so a deck handed over as a requirement can live
+    in a repository and be read like anything else in it.
+
+    `--max-width` matters more than it looks. A deck's artwork is embedded at
+    native resolution: one 27-slide review deck held 213 MB of it, which is fine
+    inside the deck and impossible in a repository. Only images wider than the
+    bound are rewritten, so nothing already small is re-encoded. Needs
+    ImageMagick; without it the images are written at full size rather than
+    dropped, and the manifest still records what they are.
+
+    `--colors` is the cheaper half of the same problem and usually the one to
+    reach for first: the same deck went from 20 MB to 7.4 MB at `--colors 256`
+    **without losing a pixel of resolution**, and resolution is what keeps an
+    annotation readable. Photographs are where quantizing shows — look at the
+    output before committing to a low count.
+
+    Video is left out unless `--include-media` — one embedded clip was 94 MB on
+    its own. Whatever is skipped is named in the result, never silently.
+    """
+    result = pptxdeck.export_folder(
+        deck,
+        out_dir,
+        prefix=prefix,
+        title=title,
+        max_width=max_width,
+        colors=colors,
+        include_media=include_media,
+        overwrite=overwrite,
+    )
+    skipped = result["skipped_media"]
+    megabytes = result["bytes"] / 1e6 if isinstance(result["bytes"], int) else 0.0
+    human = (
+        f"{result['slides']} slide(s), {result['images']} image(s), "
+        f"{megabytes:.1f} MB → {out_dir}"
+    )
+    if isinstance(skipped, list) and skipped:
+        human += f"\n  skipped (not an image): {', '.join(skipped)}"
+    _emit(result, as_json=as_json, human=human)
+
+
 @pptx_app.command("replace-text")
 def pptx_replace_text(
     deck: Annotated[Path, typer.Argument(help="Source .pptx (never modified).")],
