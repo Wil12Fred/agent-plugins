@@ -911,7 +911,8 @@ def export_folder(
 SOFFICE_BINARIES = ("soffice", "libreoffice")
 SOFFICE_HINT = (
     "install LibreOffice — `pacman -S libreoffice-fresh`, `apt install libreoffice-impress`, "
-    "or `brew install --cask libreoffice`"
+    "or `brew install --cask libreoffice`. For the deck's *content* rather than its "
+    "layout, `dev pptx export` then `dev pdf from-html` needs only a browser"
 )
 PDF_MAGIC = b"%PDF-"
 

@@ -12,7 +12,7 @@ plugins/agent-toolkit/     a Claude Code plugin
 ├── src/agentctl/          the CLI and the MCP server
 ├── skills/                5 skills — SKILL.md, so Claude Code, Codex, Gemini and Cursor all read them
 ├── agents/                2 subagents — Claude Code only
-└── tests/                 153 tests
+└── tests/                 170 tests
 
 plugins/workstation/       a Claude Code plugin
 └── skills/                2 skills — this Arch/KDE machine's own operations
@@ -26,7 +26,7 @@ apps/                      services and CLIs, sharing `opscore`
 
 | Package | Tests |
 |---|---|
-| `plugins/agent-toolkit` | 153 |
+| `plugins/agent-toolkit` | 170 |
 | `apps/slack-bridge` | 68 unit + 10 e2e |
 | `apps/cloudprobe` | 77 |
 | `apps/opscore` | 49 |
@@ -49,7 +49,7 @@ uvx --from plugins/agent-toolkit agentctl --help
 | `agentctl strays [path]` | which executables sit outside the code directory, and which are declared exceptions rather than nobody's decision. Exits 7 when anything is undeclared |
 | `agentctl clipboard copy` | put text on the clipboard **and verify it landed** |
 | `agentctl android …` | boot a headless emulator, screenshot it, tap, type, read logcat, install an APK |
-| `agentctl dev pdf\|pptx\|css\|mermaid` | extract a PDF's pages and images, read and edit a PowerPoint deck, combine SVGs into a sprite, hue-shift a stylesheet, render Mermaid without a browser |
+| `agentctl dev pdf\|pptx\|css\|mermaid` | extract a PDF's pages and images, **print HTML to PDF**, read and edit a PowerPoint deck, combine SVGs into a sprite, hue-shift a stylesheet, render Mermaid without a browser |
 | `agentctl mcp` | serve `detect` and `strays` as MCP tools over stdio |
 
 Every command takes `--json` and answers with exactly one envelope, so a script
@@ -371,7 +371,7 @@ rather than a dependency: the Klipper path needs nothing at all.
 One gate over all six packages:
 
 ```bash
-make check          # lint + typecheck + tests + plugin manifests — 379 tests
+make check          # lint + typecheck + tests + plugin manifests — 396 tests
 make integration    # the suites that touch this machine and the network
 make fmt            # ruff format + fix
 ```

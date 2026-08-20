@@ -26,7 +26,7 @@ from typing import Annotated, Any
 import typer
 from typer import _click as click
 
-from agentctl import css, mermaid, pdfassets, pptxdeck, svgsprite
+from agentctl import css, htmlpdf, mermaid, pdfassets, pptxdeck, svgsprite
 from agentctl import detect as detect_module
 from agentctl import portable as portable_module
 from agentctl import rules as rules_module
@@ -433,6 +433,58 @@ def pdf_extract(
         keep_going=keep_going,
     )
     _emit_result(rows, human=str(f"{len(rows)} asset(s) → {out_dir} (manifest.csv written)"))
+
+
+@pdf_app.command("from-html")
+def pdf_from_html(
+    source: Annotated[Path, typer.Argument(help="Source .html (read-only).")],
+    out: Annotated[Path, typer.Option("--out", help="Destination .pdf.")],
+    paper: Annotated[
+        str | None,
+        typer.Option(
+            "--paper", help="A4 | A3 | A5 | Letter | Legal | Tabloid. Default: the page's own."
+        ),
+    ] = None,
+    margin: Annotated[
+        str | None, typer.Option("--margin", help="CSS length, e.g. 12mm. Default: the page's own.")
+    ] = None,
+    timeout: Annotated[float, typer.Option("--timeout", help="Seconds to allow.")] = 120.0,
+    overwrite: Annotated[
+        bool, typer.Option("--overwrite", help="Replace an existing output file.")
+    ] = False,
+    as_json: Annotated[bool, typer.Option("--json", help="Emit the JSON envelope.")] = False,
+) -> None:
+    """Print an HTML file to PDF with a headless browser.
+
+    The usual answers to "make a PDF" are LaTeX and LibreOffice. On a machine
+    with neither, a third is often already in a cache directory: Chromium ships a
+    print engine, and it is the same one that rendered the page you checked. For
+    a document authored as HTML this is not a fallback, it is the right tool.
+
+    Not a substitute for `dev pptx pdf` — a browser cannot open a `.pptx` at all.
+
+    Three things it gets wrong unless told: it stamps every page with the URL and
+    date (disabled here, always); paper size is not a flag but an `@page` rule,
+    so without `--paper` you get US Letter wherever you are; and it can exit 0
+    having written nothing, so the result is checked for the `%PDF-` magic rather
+    than trusted.
+
+    Finds a browser via `CHROME_BINARY`, then `PATH`, then Playwright's download
+    cache — and always reports which, because a silently-chosen engine makes the
+    output depend on something nobody mentioned.
+    """
+    result = htmlpdf.render(
+        source, out, paper=paper, margin=margin, timeout=timeout, overwrite=overwrite
+    )
+    megabytes = result["bytes"] / 1e6 if isinstance(result["bytes"], int) else 0.0
+    _emit(
+        result,
+        as_json=as_json,
+        human=(
+            f"{result['pages']} page(s), {megabytes:.1f} MB → {out}\n"
+            f"  {result['renderer']} (via {result['found_via']}) · {result['paper']}"
+        ),
+    )
 
 
 @pdf_app.command("combine-svg")

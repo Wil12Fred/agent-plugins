@@ -34,6 +34,9 @@ target-version = "py311"
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
 
+[tool.pytest.ini_options]
+markers = ["integration: runs a real browser; skips when none is installed"]
+
 [tool.mypy]
 strict = true
 python_version = "3.11"
