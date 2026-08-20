@@ -333,14 +333,20 @@ def survey(
         found.append(candidate)
 
     found.sort(key=lambda c: (c.duplicate_of is None, c.mentions, -c.lines))
-    return Survey(candidates=found, scanned=scanned, vocabulary=words, target=str(target) if target else None)
+    return Survey(
+        candidates=found,
+        scanned=scanned,
+        vocabulary=words,
+        target=str(target) if target else None,
+    )
 
 
 def _classify(
     lines: Sequence[str], pattern: re.Pattern[str]
 ) -> tuple[list[str], list[str]]:
     """Split the project-mentioning lines into substance and imports."""
-    substance, imports = [], []
+    substance: list[str] = []
+    imports: list[str] = []
     for line in lines:
         if not pattern.search(line):
             continue
@@ -407,7 +413,10 @@ def _fingerprints(target: Path) -> dict[str, str]:
         if SKIP_DIRECTORIES.intersection(path.relative_to(target).parts):
             continue
         try:
-            index.setdefault(_digest(path.read_text(encoding="utf-8")), path.relative_to(target).as_posix())
+            index.setdefault(
+                _digest(path.read_text(encoding="utf-8")),
+                path.relative_to(target).as_posix(),
+            )
         except (OSError, UnicodeDecodeError):
             continue
     return index
