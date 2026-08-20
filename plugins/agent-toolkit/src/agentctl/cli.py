@@ -750,6 +750,43 @@ def pptx_replace_image(
     )
 
 
+@pptx_app.command("pdf")
+def pptx_pdf(
+    deck: Annotated[Path, typer.Argument(help="Source .pptx (read-only).")],
+    out: Annotated[Path, typer.Option("--out", help="Destination .pdf.")],
+    timeout: Annotated[
+        float, typer.Option("--timeout", help="Seconds to allow LibreOffice.")
+    ] = 600.0,
+    overwrite: Annotated[
+        bool, typer.Option("--overwrite", help="Replace an existing output file.")
+    ] = False,
+    as_json: Annotated[bool, typer.Option("--json", help="Emit the JSON envelope.")] = False,
+) -> None:
+    """Render a deck to PDF, faithfully, through LibreOffice.
+
+    The only command here that is not stdlib, because it is the only one that
+    needs a layout engine rather than a parser. `export` gives you the deck's
+    *content* as markdown; this gives you what the slides *look like*, which is
+    what you want when the deck is a design review and the layout is the message.
+
+    **Needs LibreOffice** and refuses by name when it is absent. There is no
+    pure-Python fallback on offer: rendering a slide means resolving the theme,
+    the fonts and the embedded objects, and a substitute would produce a document
+    that is not what the deck looks like — which is worse than refusing, because
+    the reader cannot tell by looking.
+
+    A large deck is minutes, not seconds: LibreOffice decodes every embedded
+    asset, so a 200 MB deck with video earns the default ten-minute allowance.
+    """
+    result = pptxdeck.to_pdf(deck, out, timeout=timeout, overwrite=overwrite)
+    megabytes = result["bytes"] / 1e6 if isinstance(result["bytes"], int) else 0.0
+    _emit(
+        result,
+        as_json=as_json,
+        human=f"{result['pages']} page(s), {megabytes:.1f} MB → {out}  [{result['renderer']}]",
+    )
+
+
 @pptx_app.command("unpack")
 def pptx_unpack(
     deck: Annotated[Path, typer.Argument(help="Source .pptx (read-only).")],

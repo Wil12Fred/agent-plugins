@@ -14,13 +14,14 @@ from __future__ import annotations
 
 import csv
 import re
+import subprocess
 import zipfile
 from pathlib import Path
 
 import pytest
 
 from agentctl import pdfassets, pptxdeck
-from agentctl.errors import NotFoundError, UsageError, ValidationError
+from agentctl.errors import ApiError, ConfigError, NotFoundError, UsageError, ValidationError
 
 NS_P = 'xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"'
 NS_A = 'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"'
@@ -758,3 +759,134 @@ def test_the_default_still_puts_images_beside_the_markdown(
     assert "](images/" in body
     for link in re.findall(r"\]\(([^)]+)\)", body):
         assert (out / link).resolve().is_file(), f"dead link: {link}"
+
+
+# --------------------------------------------------------------------------- #
+# Rendering to PDF
+#
+# LibreOffice is not installed on the machine these were written on, so the
+# subprocess is faked. That is a real limit and it is stated rather than hidden:
+# what is covered here is the logic around the call — the refusals, and the three
+# ways LibreOffice fails while reporting success. Whether the rendering itself is
+# faithful can only be answered by running it.
+# --------------------------------------------------------------------------- #
+
+
+def _fake_soffice(monkeypatch, *, writes: bytes | None = b"%PDF-1.7\nfake", rc: int = 0):
+    """Stand in for LibreOffice, writing whatever the test needs into --outdir."""
+    monkeypatch.setattr(pptxdeck.shutil, "which", lambda name: "/usr/bin/soffice")
+    calls: list[list[str]] = []
+
+    def run(cmd, **kwargs):
+        calls.append(cmd)
+        if writes is not None:
+            out_dir = Path(cmd[cmd.index("--outdir") + 1])
+            (out_dir / "deck.pdf").write_bytes(writes)
+        return subprocess.CompletedProcess(
+            cmd, rc, stdout="", stderr="Error: source file could not be loaded"
+        )
+
+    monkeypatch.setattr(pptxdeck.subprocess, "run", run)
+    return calls
+
+
+def test_a_missing_libreoffice_names_the_package(deck: Path, tmp_path: Path, monkeypatch) -> None:
+    """Rule: an error that says what broke without saying what to do is half an error.
+
+    "LibreOffice not found" sends the reader to a search engine; the install line
+    sends them to a working command.
+    """
+    monkeypatch.setattr(pptxdeck.shutil, "which", lambda name: None)
+    with pytest.raises(ConfigError, match="libreoffice"):
+        pptxdeck.to_pdf(deck, tmp_path / "out.pdf")
+
+
+def test_the_conversion_gets_its_own_profile(deck: Path, tmp_path: Path, monkeypatch) -> None:
+    """Rule: never share the user's LibreOffice profile.
+
+    With the default profile, a call made while a desktop LibreOffice is running
+    attaches to that instance and converts nothing — exit 0, no file, no message.
+    A private `-env:UserInstallation` is the whole defence.
+    """
+    calls = _fake_soffice(monkeypatch)
+    pptxdeck.to_pdf(deck, tmp_path / "out.pdf")
+
+    flag = next(a for a in calls[0] if a.startswith("-env:UserInstallation="))
+    assert flag.startswith("-env:UserInstallation=file://")
+    assert "--headless" in calls[0]
+
+
+def test_exit_zero_with_no_output_is_still_a_failure(
+    deck: Path, tmp_path: Path, monkeypatch
+) -> None:
+    """Rule: verify the artefact, not the return code.
+
+    LibreOffice exits 0 on a profile clash and on some load failures, having
+    written nothing. Trusting the status reports success and leaves no file —
+    the caller then looks for a bug in whatever consumes the PDF.
+    """
+    _fake_soffice(monkeypatch, writes=None)
+    with pytest.raises(ValidationError, match="produced no PDF"):
+        pptxdeck.to_pdf(deck, tmp_path / "out.pdf")
+
+
+def test_a_file_that_is_not_a_pdf_is_refused(deck: Path, tmp_path: Path, monkeypatch) -> None:
+    """Rule: a `.pdf` suffix is a claim, `%PDF-` is the evidence."""
+    _fake_soffice(monkeypatch, writes=b"<html>error page</html>")
+    with pytest.raises(ValidationError, match="not a PDF"):
+        pptxdeck.to_pdf(deck, tmp_path / "out.pdf")
+
+
+def test_a_timeout_says_so_rather_than_failing_generically(
+    deck: Path, tmp_path: Path, monkeypatch
+) -> None:
+    """Rule: name the failure. A killed process otherwise reports as 'it failed'.
+
+    A 200 MB deck with video genuinely takes minutes, so hitting the limit is a
+    tuning problem, not a broken file — and the message has to say which.
+    """
+    monkeypatch.setattr(pptxdeck.shutil, "which", lambda name: "/usr/bin/soffice")
+
+    def run(cmd, **kwargs):
+        raise subprocess.TimeoutExpired(cmd, kwargs.get("timeout", 1))
+
+    monkeypatch.setattr(pptxdeck.subprocess, "run", run)
+    with pytest.raises(ApiError, match="did not finish"):
+        pptxdeck.to_pdf(deck, tmp_path / "out.pdf", timeout=5)
+
+
+def test_a_non_presentation_fails_before_the_render(tmp_path: Path, monkeypatch) -> None:
+    """Rule: refuse in milliseconds, not after ten minutes of LibreOffice.
+
+    The format check is stdlib and instant; the render is minutes. Doing them in
+    the wrong order makes a typo cost a coffee break.
+    """
+    calls = _fake_soffice(monkeypatch)
+    fake = tmp_path / "notadeck.pptx"
+    fake.write_bytes(b"\xd0\xcf\x11\xe0not a zip")
+
+    with pytest.raises(ValidationError):
+        pptxdeck.to_pdf(fake, tmp_path / "out.pdf")
+    assert calls == [], "LibreOffice must not have been invoked"
+
+
+def test_an_existing_output_is_refused_unless_overwrite_pdf(
+    deck: Path, tmp_path: Path, monkeypatch
+) -> None:
+    _fake_soffice(monkeypatch)
+    out = tmp_path / "out.pdf"
+    out.write_bytes(b"previous")
+    with pytest.raises(UsageError, match="already exists"):
+        pptxdeck.to_pdf(deck, out)
+    assert pptxdeck.to_pdf(deck, out, overwrite=True)["renderer"] == "soffice"
+
+
+def test_the_page_count_ignores_the_pages_tree_node(tmp_path: Path) -> None:
+    """Rule: `/Type /Pages` is the tree, `/Type /Page` is a leaf.
+
+    A regex that matches both reports one page too many on every document, which
+    is exactly the kind of off-by-one nobody checks.
+    """
+    pdf = tmp_path / "x.pdf"
+    pdf.write_bytes(b"%PDF-1.7\n/Type /Pages /Count 2\n/Type /Page\n/Type /Page\n")
+    assert pptxdeck._pdf_pages(pdf) == 2
