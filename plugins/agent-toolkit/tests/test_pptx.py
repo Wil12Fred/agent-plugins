@@ -101,7 +101,13 @@ def build_deck(
             "ppt/slides/slide1.xml",
             _slide_xml([["Tot", "al: ", "42"], ["Second line"]], ["rId9"]),
         )
-        slide1_rels = [("rId9", "image", "../media/image1.png")]
+        # A real slide always points at its layout, which points at the master and
+        # the theme. Without that edge nothing downstream is reachable and a cut
+        # deck would lose the chrome it needs to open.
+        slide1_rels = [
+            ("rId9", "image", "../media/image1.png"),
+            ("rId1", "slideLayout", "../slideLayouts/slideLayout1.xml"),
+        ]
         if notes is not None:
             slide1_rels.append(("rId8", "notesSlide", "../notesSlides/notesSlide1.xml"))
             deck.writestr(
@@ -112,7 +118,11 @@ def build_deck(
 
         deck.writestr("ppt/slides/slide2.xml", _slide_xml([["Slide two"]], ["rId9"]))
         deck.writestr(
-            "ppt/slides/_rels/slide2.xml.rels", _rels([("rId9", "image", "../media/image2.png")])
+            "ppt/slides/_rels/slide2.xml.rels",
+            _rels([
+                ("rId9", "image", "../media/image2.png"),
+                ("rId1", "slideLayout", "../slideLayouts/slideLayout1.xml"),
+            ]),
         )
         deck.writestr("ppt/slides/slide3.xml", _slide_xml([["Slide three"]], []))
 
