@@ -103,17 +103,30 @@ def _page_range(first: int | None, last: int | None) -> list[str]:
     return args
 
 
-def identify(path: Path) -> ImageMeta | None:
-    """Read pixel size and colorspace via ImageMagick, or ``None`` if absent."""
+def identify(path: Path, *, timeout: float | None = None) -> ImageMeta | None:
+    """Read pixel size and colorspace via ImageMagick, or ``None`` if absent.
+
+    ``-ping`` stops after the header. Without it ImageMagick decodes the whole
+    file to answer a question the header already contains, which on a large
+    image is slow and on a video is unbounded — a 93 MB embedded mp4 handed to
+    `identify` does not come back, and the caller looks hung rather than wrong.
+    A caller that cannot vouch for what it is pointing at should also pass a
+    ``timeout``: unknown dimensions are a worse answer than measured ones and a
+    far better one than no answer at all.
+    """
     binary = shutil.which("identify")
     if binary is None:
         return None
-    completed = subprocess.run(
-        [binary, "-format", "%w %h %[colorspace]", str(path)],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    try:
+        completed = subprocess.run(
+            [binary, "-ping", "-format", "%w %h %[colorspace]", f"{path}[0]"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired:
+        return None
     if completed.returncode != 0 or not completed.stdout.strip():
         return None
     parts = completed.stdout.split()
