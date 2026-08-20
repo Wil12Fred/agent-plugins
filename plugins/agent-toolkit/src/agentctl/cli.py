@@ -591,6 +591,10 @@ def pptx_export(
     prefix: Annotated[
         str | None, typer.Option("--prefix", help="Image filename prefix (default: deck stem).")
     ] = None,
+    images_dir: Annotated[
+        Path | None,
+        typer.Option("--images-dir", help="Put images here instead of <out-dir>/images."),
+    ] = None,
     max_width: Annotated[
         int, typer.Option("--max-width", help="Shrink images wider than this. 0 = keep native.")
     ] = 0,
@@ -619,6 +623,12 @@ def pptx_export(
     ImageMagick; without it the images are written at full size rather than
     dropped, and the manifest still records what they are.
 
+    `--images-dir` sends the images elsewhere and links to them relatively. The
+    markdown is the half worth committing and the images are usually the half
+    that must not be — they are recoverable from wherever the deck came from,
+    and they are the entire weight. Doing that split by hand means rewriting
+    every link in the file.
+
     `--colors` is the cheaper half of the same problem and usually the one to
     reach for first: the same deck went from 20 MB to 7.4 MB at `--colors 256`
     **without losing a pixel of resolution**, and resolution is what keeps an
@@ -633,6 +643,7 @@ def pptx_export(
         out_dir,
         prefix=prefix,
         title=title,
+        images_dir=images_dir,
         max_width=max_width,
         colors=colors,
         include_media=include_media,
