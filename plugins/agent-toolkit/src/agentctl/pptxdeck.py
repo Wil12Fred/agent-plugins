@@ -58,6 +58,7 @@ import csv
 import posixpath
 import re
 import shutil
+import subprocess
 import xml.etree.ElementTree as ET
 import zipfile
 from dataclasses import dataclass, field
@@ -683,6 +684,211 @@ def replace_media(
         "replaced": target,
         "source": str(image),
         "bytes": len(payload),
+    }
+
+
+def _quantize(path: Path, colors: int) -> bool:
+    """Reduce a raster to a palette, in place. Returns whether it happened.
+
+    Screenshots, diagrams and gradients — what a review deck is made of — carry
+    far fewer distinct colours than their 24-bit encoding reserves, so this is
+    usually a large saving at no visible cost: on a real 27-slide deck it took
+    the exported images from 20 MB to 7.4 MB **at the same resolution**, which
+    is the trade worth making when the alternative is shrinking them until the
+    annotations stop being readable.
+
+    Photographs are the case where it shows. Judge the output before committing
+    to a low count rather than trusting the ratio.
+    """
+    binary = shutil.which("magick") or shutil.which("convert")
+    if binary is None:
+        return False
+    completed = subprocess.run(
+        [binary, str(path), "-colors", str(colors), str(path)],
+        capture_output=True,
+        check=False,
+    )
+    return completed.returncode == 0
+
+
+def _downscale(path: Path, max_width: int) -> tuple[int, int] | None:
+    """Shrink a raster in place to ``max_width``, returning its new size.
+
+    ImageMagick's ``>`` qualifier only ever shrinks, so an image already narrower
+    than the bound is left byte-identical rather than re-encoded — re-encoding a
+    small PNG to "resize" it loses quality for nothing.
+
+    Returns ``None`` when ImageMagick is absent or refuses the file. The caller
+    keeps the original in that case: an asset at the wrong size is recoverable,
+    an asset that was silently dropped is not.
+    """
+    binary = shutil.which("magick") or shutil.which("convert")
+    if binary is None:
+        return None
+    completed = subprocess.run(
+        [binary, str(path), "-resize", f"{max_width}x{max_width}>", str(path)],
+        capture_output=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        return None
+    meta = identify(path, timeout=IDENTIFY_TIMEOUT)
+    return (meta.width, meta.height) if meta else None
+
+
+def _markdown(deck: Deck, images: dict[str, str], title: str) -> str:
+    """One section per slide, in display order, with the images it references.
+
+    The text is what the slide says; the images are how it says it. Splitting
+    them into separate files would make the result unreadable, which is the
+    whole point of exporting a deck to markdown rather than to a directory of
+    PNGs somebody has to open one at a time.
+    """
+    lines = [f"# {title}", ""]
+    lines.append(
+        f"> Exported from `{deck.path.name}` — {len(deck.slides)} slide(s), "
+        f"{len(images)} image(s). Slides are numbered by **display order**."
+    )
+    lines.append("")
+    for slide in deck.slides:
+        lines.append(f"## Slide {slide.index}")
+        lines.append("")
+        if slide.text:
+            lines.extend(slide.text)
+            lines.append("")
+        else:
+            lines.append("*(no text)*")
+            lines.append("")
+        shown = [images[name] for name in slide.media if name in images]
+        for position, name in enumerate(shown, start=1):
+            lines.append(f"![slide {slide.index}, image {position}]({name})")
+            lines.append("")
+        if slide.notes:
+            lines.append("**Speaker notes**")
+            lines.append("")
+            lines.extend(f"> {line}" for line in slide.notes)
+            lines.append("")
+
+    # Artwork on the master or a layout belongs to no slide, so the loop above
+    # can never show it — and a file present in `images/` that the document
+    # never mentions reads as clutter rather than as the brand's logo, which is
+    # usually exactly what it is.
+    on_slides = {images[name] for slide in deck.slides for name in slide.media if name in images}
+    loose = [ref for ref in images.values() if ref not in on_slides]
+    if loose:
+        lines.append("## Images not placed on any slide")
+        lines.append("")
+        lines.append(
+            "These come from the master or a layout — the recurring furniture of the deck, "
+            "which is where a logo usually lives."
+        )
+        lines.append("")
+        for ref in loose:
+            lines.append(f"![{Path(ref).name}]({ref})")
+            lines.append("")
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def export_folder(
+    path: Path,
+    out_dir: Path,
+    *,
+    prefix: str | None = None,
+    title: str | None = None,
+    max_width: int = 0,
+    colors: int = 0,
+    include_media: bool = False,
+    overwrite: bool = False,
+) -> dict[str, object]:
+    """Turn a deck into a readable folder: one markdown file, plus its images.
+
+    A `.pptx` is a delivery format and a terrible archive format — it is opaque
+    to grep, to review and to any diff. This writes the same content as
+    ``index.md`` with the images beside it, so a deck handed over as a
+    requirement can live in a repository and be read like anything else.
+
+    ``max_width`` bounds the images. It matters more than it looks: a deck's
+    embedded artwork is at native resolution, which for a 27-slide review deck
+    measured 213 MB — usable in the deck and impossible in a repository. Only
+    images wider than the bound are touched.
+
+    ``colors`` quantizes them, which is the cheaper half of the same problem:
+    the deck above went from 20 MB to 7.4 MB at 256 colours **without losing a
+    pixel of resolution**, and resolution is what makes an annotation readable.
+    Reach for it before reaching for a smaller ``max_width``.
+
+    ``include_media`` adds video and other non-image parts. Off by default for
+    the same reason: one embedded clip was 94 MB on its own.
+
+    Raises:
+        UsageError: the destination exists and ``overwrite`` was not given.
+    """
+    deck = inspect(path)
+    if out_dir.exists() and any(out_dir.iterdir()) and not overwrite:
+        raise UsageError(
+            f"not empty: {out_dir}", detail="pass --overwrite to replace its contents"
+        )
+
+    prefix = prefix or path.stem.replace(" ", "_")
+    images_dir = out_dir / "images"
+    images_dir.mkdir(parents=True, exist_ok=True)
+
+    wanted = [name for name in deck.media if deck.references.get(name)]
+    if not include_media:
+        wanted = [name for name in wanted if Path(name).suffix.lower() in MEASURABLE_SUFFIXES]
+
+    rows: list[dict[str, object]] = []
+    written: dict[str, str] = {}
+    total_bytes = 0
+    with _open(path) as archive:
+        for index, name in enumerate(wanted, start=1):
+            target = images_dir / f"{prefix}_{index}{Path(name).suffix.lower()}"
+            target.write_bytes(archive.read(name))
+            measurable = target.suffix.lower() in MEASURABLE_SUFFIXES
+            before = identify(target, timeout=IDENTIFY_TIMEOUT) if measurable else None
+            after = _downscale(target, max_width) if (measurable and max_width) else None
+            if measurable and colors:
+                _quantize(target, colors)
+            written[name] = f"images/{target.name}"
+            total_bytes += target.stat().st_size
+            rows.append(
+                {
+                    "file": written[name],
+                    "slides": " ".join(
+                        str(s.index) for s in deck.slides if name in s.media
+                    ),
+                    "width": (after[0] if after else (before.width if before else 0)),
+                    "height": (after[1] if after else (before.height if before else 0)),
+                    "original_width": before.width if before else 0,
+                    "original_height": before.height if before else 0,
+                    "bytes": target.stat().st_size,
+                    "extracted_from": name,
+                }
+            )
+
+    index_md = out_dir / "index.md"
+    index_md.write_text(
+        _markdown(deck, written, title or path.stem), encoding="utf-8"
+    )
+
+    manifest = out_dir / "manifest.csv"
+    if rows:
+        with manifest.open("w", newline="", encoding="utf-8") as handle:
+            writer = csv.DictWriter(handle, fieldnames=list(rows[0]))
+            writer.writeheader()
+            writer.writerows(rows)
+
+    return {
+        "out_dir": str(out_dir),
+        "index": str(index_md),
+        "slides": len(deck.slides),
+        "images": len(rows),
+        "bytes": total_bytes,
+        "skipped_media": [
+            name
+            for name in deck.media
+            if deck.references.get(name) and name not in written
+        ],
     }
 
 

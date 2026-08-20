@@ -12,7 +12,7 @@ plugins/agent-toolkit/     a Claude Code plugin
 ├── src/agentctl/          the CLI and the MCP server
 ├── skills/                5 skills — SKILL.md, so Claude Code, Codex, Gemini and Cursor all read them
 ├── agents/                2 subagents — Claude Code only
-└── tests/                 133 tests
+└── tests/                 143 tests
 
 plugins/workstation/       a Claude Code plugin
 └── skills/                2 skills — this Arch/KDE machine's own operations
@@ -26,7 +26,7 @@ apps/                      services and CLIs, sharing `opscore`
 
 | Package | Tests |
 |---|---|
-| `plugins/agent-toolkit` | 133 |
+| `plugins/agent-toolkit` | 143 |
 | `apps/slack-bridge` | 68 unit + 10 e2e |
 | `apps/cloudprobe` | 77 |
 | `apps/opscore` | 49 |
@@ -198,6 +198,13 @@ on a canvas — and the wrong thing to make every installing project carry for t
 four operations here. It is used in this repository, once, as an independent
 judge: it opens the edited deck in the test that proves the output is valid.
 
+`export` is the one that gets used most: a deck becomes a folder with `index.md`,
+`images/` and a manifest, so a requirement delivered as a `.pptx` can live in a
+repository and be read, grepped and diffed like anything else in it. `--colors 256`
+is the flag to reach for before `--max-width` — on a real 27-slide deck it took the
+exported images from 20 MB to 7.4 MB **without losing a pixel of resolution**, and
+resolution is what keeps an annotation readable.
+
 Three properties of the format cost time if you assume otherwise, and each is
 handled rather than documented:
 
@@ -356,7 +363,7 @@ rather than a dependency: the Klipper path needs nothing at all.
 One gate over all six packages:
 
 ```bash
-make check          # lint + typecheck + tests + plugin manifests — 359 tests
+make check          # lint + typecheck + tests + plugin manifests — 369 tests
 make integration    # the suites that touch this machine and the network
 make fmt            # ruff format + fix
 ```

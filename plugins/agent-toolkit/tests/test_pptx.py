@@ -12,12 +12,13 @@ Each test names the rule it enforces.
 
 from __future__ import annotations
 
+import csv
 import zipfile
 from pathlib import Path
 
 import pytest
 
-from agentctl import pptxdeck
+from agentctl import pdfassets, pptxdeck
 from agentctl.errors import NotFoundError, UsageError, ValidationError
 
 NS_P = 'xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"'
@@ -573,3 +574,149 @@ def test_a_missing_replacement_file_is_refused(deck: Path, tmp_path: Path) -> No
         pptxdeck.replace_media(
             deck, tmp_path / "a.pptx", media="image1.png", image=tmp_path / "absent.png"
         )
+
+
+# --------------------------------------------------------------------------- #
+# Exporting to a folder
+# --------------------------------------------------------------------------- #
+
+
+def test_the_export_writes_slides_in_display_order(deck: Path, tmp_path: Path) -> None:
+    """Rule: the markdown is ordered by what the audience saw, not by part name.
+
+    The fixture presents 3, 1, 2. An export numbered from the filenames would
+    put the deck's own instructions in an order the client never sees, which is
+    unreviewable against the deck it came from.
+    """
+    pptxdeck.export_folder(deck, tmp_path / "out")
+    body = (tmp_path / "out" / "index.md").read_text(encoding="utf-8")
+
+    assert body.index("Slide three") < body.index("Total: 42") < body.index("Slide two")
+
+
+def test_an_image_is_referenced_from_every_slide_that_uses_it(
+    deck: Path, tmp_path: Path
+) -> None:
+    """Rule: one file, referenced as many times as the deck references it.
+
+    Writing a second copy per slide is the obvious implementation and the wrong
+    one: a logo used on forty slides becomes forty files, and the folder stops
+    being readable at the exact size where reading it matters.
+    """
+    pptxdeck.export_folder(deck, tmp_path / "out")
+    body = (tmp_path / "out" / "index.md").read_text(encoding="utf-8")
+    files = sorted(p.name for p in (tmp_path / "out" / "images").iterdir())
+
+    assert len(files) == 3, f"one file per referenced image, got {files}"
+    # Two are placed on slides; the layout's logo belongs to no slide and is
+    # listed separately rather than written to disk and never mentioned.
+    assert body.count("](images/") == 3
+    assert "## Images not placed on any slide" in body
+
+
+def test_video_is_left_out_unless_asked_for(deck: Path, tmp_path: Path) -> None:
+    """Rule: a repository is not where a 94 MB clip goes, and silence is worse.
+
+    The skip has to be reported. A folder that quietly lacks the deck's video
+    reads as a deck that had none.
+    """
+    without = pptxdeck.export_folder(deck, tmp_path / "a")
+    assert "ppt/media/media1.mp4" in without["skipped_media"]
+
+    with_media = pptxdeck.export_folder(deck, tmp_path / "b", include_media=True)
+    assert with_media["skipped_media"] == []
+    assert (tmp_path / "b" / "images" / "deck_4.mp4").exists()
+
+
+def test_speaker_notes_survive_the_export(tmp_path: Path) -> None:
+    """Rule: the notes are where a deck hides its reasoning.
+
+    In a review deck the slide says what to change and the note says why. An
+    export that drops them loses the half that cannot be reconstructed.
+    """
+    path = build_deck(tmp_path / "noted.pptx", notes="remember the budget")
+    pptxdeck.export_folder(path, tmp_path / "out")
+    assert "remember the budget" in (tmp_path / "out" / "index.md").read_text(encoding="utf-8")
+
+
+def test_a_non_empty_destination_is_refused(deck: Path, tmp_path: Path) -> None:
+    """Rule: an export overwrites a folder, so it must not do it by accident."""
+    out = tmp_path / "out"
+    out.mkdir()
+    (out / "notes.md").write_text("hand-written", encoding="utf-8")
+
+    with pytest.raises(UsageError, match="not empty"):
+        pptxdeck.export_folder(deck, out)
+    pptxdeck.export_folder(deck, out, overwrite=True)
+
+
+def test_an_empty_destination_is_fine(deck: Path, tmp_path: Path) -> None:
+    """The control: refusing every existing directory would refuse `mkdir -p`."""
+    out = tmp_path / "out"
+    out.mkdir()
+    assert pptxdeck.export_folder(deck, out)["slides"] == 3
+
+
+def test_the_manifest_keeps_the_size_the_image_arrived_at(
+    deck: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Rule: a downscale must say what it shrank, and from what.
+
+    Without the original dimensions the manifest cannot answer the one question
+    asked of it later — is this file the asset, or a preview of it?
+    """
+    monkeypatch.setattr(
+        pptxdeck, "identify", lambda p, **k: pdfassets.ImageMeta(4000, 3000, "sRGB")
+    )
+    monkeypatch.setattr(pptxdeck, "_downscale", lambda p, w: (1600, 1200))
+
+    pptxdeck.export_folder(deck, tmp_path / "out", max_width=1600)
+    rows = list(csv.DictReader((tmp_path / "out" / "manifest.csv").open(encoding="utf-8")))
+
+    assert rows[0]["width"] == "1600" and rows[0]["original_width"] == "4000"
+
+
+def test_nothing_is_downscaled_when_no_bound_is_given(
+    deck: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The control for the test above: `--max-width 0` must not touch a file."""
+    called: list[Path] = []
+    monkeypatch.setattr(pptxdeck, "_downscale", lambda p, w: called.append(p))
+
+    pptxdeck.export_folder(deck, tmp_path / "out")
+    assert called == []
+
+
+def test_quantizing_is_off_unless_asked_for(
+    deck: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Rule: an export must not silently re-encode what it was handed.
+
+    Quantizing is lossy. Doing it by default would mean a folder produced to
+    *preserve* a deck quietly degrades it, and nothing in the output says so.
+    """
+    seen: list[int] = []
+    monkeypatch.setattr(pptxdeck, "_quantize", lambda p, c: seen.append(c) or True)
+
+    pptxdeck.export_folder(deck, tmp_path / "a")
+    assert seen == []
+
+    pptxdeck.export_folder(deck, tmp_path / "b", colors=256)
+    assert seen == [256, 256, 256], "every image, and only images"
+
+
+def test_quantizing_never_touches_a_video(
+    deck: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Rule: the colour tools are for rasters.
+
+    Same shape as the `identify` hang: handing ImageMagick a video makes it
+    decode the video. Here the video is only present with --include-media, so
+    the two options must not combine into a several-minute stall.
+    """
+    seen: list[Path] = []
+    monkeypatch.setattr(pptxdeck, "_quantize", lambda p, c: seen.append(p) or True)
+
+    pptxdeck.export_folder(deck, tmp_path / "out", colors=256, include_media=True)
+    assert not any(p.suffix == ".mp4" for p in seen)
+    assert any(p.suffix == ".png" for p in seen), "but the images were still done"
