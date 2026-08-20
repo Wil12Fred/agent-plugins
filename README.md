@@ -12,7 +12,7 @@ plugins/agent-toolkit/     a Claude Code plugin
 ├── src/agentctl/          the CLI and the MCP server
 ├── skills/                5 skills — SKILL.md, so Claude Code, Codex, Gemini and Cursor all read them
 ├── agents/                2 subagents — Claude Code only
-└── tests/                 187 tests
+└── tests/                 199 tests
 
 plugins/workstation/       a Claude Code plugin
 └── skills/                2 skills — this Arch/KDE machine's own operations
@@ -26,7 +26,7 @@ apps/                      services and CLIs, sharing `opscore`
 
 | Package | Tests |
 |---|---|
-| `plugins/agent-toolkit` | 187 |
+| `plugins/agent-toolkit` | 199 |
 | `apps/slack-bridge` | 68 unit + 10 e2e |
 | `apps/cloudprobe` | 77 |
 | `apps/opscore` | 49 |
@@ -50,6 +50,7 @@ uvx --from plugins/agent-toolkit agentctl --help
 | `agentctl clipboard copy` | put text on the clipboard **and verify it landed** |
 | `agentctl android …` | boot a headless emulator, screenshot it, tap, type, read logcat, install an APK |
 | `agentctl dev pdf\|pptx\|css\|mermaid` | extract a PDF's pages and images, **print HTML to PDF**, read and edit a PowerPoint deck, combine SVGs into a sprite, hue-shift a stylesheet, render Mermaid without a browser |
+| `agentctl drive deliver` | split a deck per task and publish `<ticket>/<task>/` to a Drive folder, from a JSON plan |
 | `agentctl mcp` | serve `detect` and `strays` as MCP tools over stdio |
 
 Every command takes `--json` and answers with exactly one envelope, so a script
@@ -381,7 +382,7 @@ rather than a dependency: the Klipper path needs nothing at all.
 One gate over all six packages:
 
 ```bash
-make check          # lint + typecheck + tests + plugin manifests — 413 tests
+make check          # lint + typecheck + tests + plugin manifests — 425 tests
 make integration    # the suites that touch this machine and the network
 make fmt            # ruff format + fix
 ```

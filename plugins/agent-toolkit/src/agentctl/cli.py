@@ -26,7 +26,17 @@ from typing import Annotated, Any
 import typer
 from typer import _click as click
 
-from agentctl import css, htmlpdf, mermaid, pdfassets, pptxdeck, pptxlayout, svgsprite
+from agentctl import (
+    css,
+    drive,
+    htmlpdf,
+    mermaid,
+    pdfassets,
+    pptxdeck,
+    pptxlayout,
+    pptxsplit,
+    svgsprite,
+)
 from agentctl import detect as detect_module
 from agentctl import portable as portable_module
 from agentctl import rules as rules_module
@@ -802,6 +812,41 @@ def pptx_replace_image(
     )
 
 
+@pptx_app.command("split")
+def pptx_split(
+    deck: Annotated[Path, typer.Argument(help="Source .pptx (read-only).")],
+    out: Annotated[Path, typer.Option("--out", help="Destination .pptx.")],
+    slides: Annotated[
+        str, typer.Option("--slides", help='Display positions, e.g. "1,3,5-7".')
+    ],
+    overwrite: Annotated[
+        bool, typer.Option("--overwrite", help="Replace an existing output file.")
+    ] = False,
+    as_json: Annotated[bool, typer.Option("--json", help="Emit the JSON envelope.")] = False,
+) -> None:
+    """Cut a deck down to the slides you name, dropping everything else.
+
+    A review deck covering twenty tasks is nineteen tasks of noise to whoever
+    picks up the twentieth. This writes a real `.pptx` holding only the slides
+    given, and the pruning is where the weight goes: the kept set is computed by
+    following relationships, so media nothing references is dropped. On a real
+    deck, 223 MB became 1.9 MB for four slides.
+
+    Numbers are **display positions** — what a person reads off the deck — and an
+    out-of-range one is refused rather than clipped, because a range that
+    silently shrinks omits exactly the slide somebody meant to include.
+    """
+    wanted = pptxsplit.parse_slides(slides, 10**6)
+    result = pptxsplit.split(deck, out, wanted, overwrite=overwrite)
+    before = result["source_bytes"] / 1e6 if isinstance(result["source_bytes"], int) else 0.0
+    after = result["bytes"] / 1e6 if isinstance(result["bytes"], int) else 0.0
+    _emit(
+        result,
+        as_json=as_json,
+        human=f"{len(wanted)} slide(s) → {out}  ({after:.1f} MB, from {before:.0f} MB)",
+    )
+
+
 @pptx_app.command("html")
 def pptx_html(
     deck: Annotated[Path, typer.Argument(help="Source .pptx (read-only).")],
@@ -1178,3 +1223,74 @@ def android_install(
 ) -> None:
     """Install an APK, replacing any existing copy."""
     typer.echo(_emulator(serial).install(apk))
+
+
+# --- drive --------------------------------------------------------------------
+
+drive_app = typer.Typer(
+    name="drive", help="Deliver task packets to a Google Drive folder.", no_args_is_help=True
+)
+app.add_typer(drive_app, name="drive")
+
+
+@drive_app.command("deliver")
+def drive_deliver(
+    spec: Annotated[Path, typer.Argument(help="The plan, as JSON.")],
+    work_dir: Annotated[
+        Path, typer.Option("--work-dir", help="Where the split decks are written locally.")
+    ] = Path(".agentctl-deliver"),
+    confirm: Annotated[
+        bool, typer.Option("--confirm-write", help="Actually create folders and upload.")
+    ] = False,
+    as_json: Annotated[bool, typer.Option("--json", help="Emit the JSON envelope.")] = False,
+) -> None:
+    """Build `<ticket>/<task>/` in a Drive folder and fill it from a plan.
+
+    One JSON document says which slides of which decks belong to which task, and
+    what else goes with them. Each task gets a folder holding a `.pptx` cut to
+    exactly its slides, plus the files listed beside it — so whoever picks the
+    task up finds that task, not the whole deck.
+
+    ```json
+    {
+      "ticketName": "OPER-1010",
+      "drivePath": "https://drive.google.com/drive/folders/<id>",
+      "tasks": [
+        {"taskName": "T1 — slogan",
+         "sources": [{"pptPath": "deck.pptx", "pages": [3, 9, 21]}],
+         "attachments": ["logo.png"]}
+      ]
+    }
+    ```
+
+    **Nothing is written without `--confirm-write`.** The dry run still splits
+    every deck, so a plan naming a slide that does not exist fails before
+    anything reaches a shared drive rather than halfway through.
+
+    Safe to run twice: folders are found before they are created, and a file
+    already there is updated rather than duplicated — Drive will happily keep two
+    files with one name in a folder, which is how a reader opens the stale one.
+
+    Needs a Drive-scoped token, from `GOOGLE_OAUTH_TOKEN` or `gcloud`. A plain
+    `gcloud auth login` does not grant it; the refusal names the flag.
+    """
+    plan = drive.load_plan(spec)
+    result = drive.deliver(plan, work_dir, confirm=confirm)
+
+    lines = [f"{result['ticket']} — {result['tasks']} task(s), {result['files']} file(s)"]
+    tree = result["tree"]
+    if isinstance(tree, list):
+        for entry in tree:
+            if "task" in entry:
+                lines.append(f"  {entry['task']}/")
+                for spec_row in entry.get("files", []):
+                    size = spec_row.get("bytes", 0)
+                    size_mb = size / 1e6 if isinstance(size, int) else 0.0
+                    origin = f"  ← {spec_row['from']} {spec_row.get('slides', '')}".rstrip()
+                    lines.append(f"      {spec_row['name']}  ({size_mb:.1f} MB){origin}")
+    if not result["confirmed"]:
+        lines.append("\n  DRY RUN — nothing was written. Pass --confirm-write.")
+    elif result["url"]:
+        lines.append(f"\n  {result['url']}")
+    _emit(result, as_json=as_json, human="\n".join(lines))
+
