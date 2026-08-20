@@ -12,7 +12,7 @@ plugins/agent-toolkit/     a Claude Code plugin
 ├── src/agentctl/          the CLI and the MCP server
 ├── skills/                5 skills — SKILL.md, so Claude Code, Codex, Gemini and Cursor all read them
 ├── agents/                2 subagents — Claude Code only
-└── tests/                 98 tests
+└── tests/                 133 tests
 
 plugins/workstation/       a Claude Code plugin
 └── skills/                2 skills — this Arch/KDE machine's own operations
@@ -26,9 +26,9 @@ apps/                      services and CLIs, sharing `opscore`
 
 | Package | Tests |
 |---|---|
-| `plugins/agent-toolkit` | 98 |
+| `plugins/agent-toolkit` | 133 |
 | `apps/slack-bridge` | 68 unit + 10 e2e |
-| `apps/cloudprobe` | 72 |
+| `apps/cloudprobe` | 77 |
 | `apps/opscore` | 49 |
 | `apps/gpull` | 10 |
 | `apps/jiractl` | 22 + 4 integration |
@@ -49,7 +49,7 @@ uvx --from plugins/agent-toolkit agentctl --help
 | `agentctl strays [path]` | which executables sit outside the code directory, and which are declared exceptions rather than nobody's decision. Exits 7 when anything is undeclared |
 | `agentctl clipboard copy` | put text on the clipboard **and verify it landed** |
 | `agentctl android …` | boot a headless emulator, screenshot it, tap, type, read logcat, install an APK |
-| `agentctl dev pdf\|css\|mermaid` | extract a PDF's pages and images, combine SVGs into a sprite, hue-shift a stylesheet, render Mermaid without a browser |
+| `agentctl dev pdf\|pptx\|css\|mermaid` | extract a PDF's pages and images, read and edit a PowerPoint deck, combine SVGs into a sprite, hue-shift a stylesheet, render Mermaid without a browser |
 | `agentctl mcp` | serve `detect` and `strays` as MCP tools over stdio |
 
 Every command takes `--json` and answers with exactly one envelope, so a script
@@ -189,6 +189,43 @@ Three things it handles that silently corrupt a run otherwise:
 Nothing is guessed: no default AVD, no default package filter, no default
 project. Each refuses and names the variable.
 
+### Why `dev pptx` takes no dependency
+
+A `.pptx` is a zip of XML, so reading one, pulling its artwork out and running a
+find/replace over it are stdlib. The library people reach for, `python-pptx`, is
+the right answer for *authoring* — adding slides, creating shapes, moving things
+on a canvas — and the wrong thing to make every installing project carry for the
+four operations here. It is used in this repository, once, as an independent
+judge: it opens the edited deck in the test that proves the output is valid.
+
+Three properties of the format cost time if you assume otherwise, and each is
+handled rather than documented:
+
+- **`slide7.xml` is not the seventh slide.** Part names are assigned at creation
+  and never renumbered, so any reordered deck disagrees with itself. The order
+  is in `presentation.xml`, and `inspect` reads it from there.
+- **`ppt/media/` is not the slides' artwork.** It holds every part's, the master
+  and layouts included — which is where a client's logo almost always is. A flat
+  listing over-reports; per-slide attribution loses the logo. Both are reported,
+  separately.
+- **A sentence is not a run.** PowerPoint splits a paragraph at every formatting
+  change and at boundaries nothing on screen reveals, so `Total: 42` is
+  routinely three runs and a per-run find/replace misses text that is plainly
+  visible.
+
+That last one has a second half, and only a real deck revealed it. Matching has
+to see the joined paragraph; *writing* does not. Collapsing every multi-run
+paragraph onto its first run's formatting flattened five paragraphs of a
+27-slide deck that needed nothing of the sort — so the change goes into the
+individual runs whenever that gives the same answer, and only a match that truly
+crosses a boundary pays. The report names the ones that did.
+
+The same deck produced the other bug worth recording: `identify` was being asked
+for the dimensions of a 93 MB embedded mp4, so ImageMagick decoded the video and
+the extraction did not return in two minutes. It read as a hang rather than as a
+wrong answer. Rasters are now an allow-list, `-ping` stops at the header, and a
+timeout backstops the rest — 1.2 seconds for the same 37 assets.
+
 ### Why `clipboard copy` is not one line of shell
 
 Handing a value to a human through the clipboard is the one operation where "the
@@ -319,7 +356,7 @@ rather than a dependency: the Klipper path needs nothing at all.
 One gate over all six packages:
 
 ```bash
-make check          # lint + typecheck + tests + plugin manifests — 322 tests
+make check          # lint + typecheck + tests + plugin manifests — 359 tests
 make integration    # the suites that touch this machine and the network
 make fmt            # ruff format + fix
 ```

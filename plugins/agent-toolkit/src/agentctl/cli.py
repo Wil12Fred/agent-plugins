@@ -26,12 +26,12 @@ from typing import Annotated, Any
 import typer
 from typer import _click as click
 
-from agentctl import css, mermaid, pdfassets, svgsprite
+from agentctl import css, mermaid, pdfassets, pptxdeck, svgsprite
 from agentctl import detect as detect_module
 from agentctl import portable as portable_module
 from agentctl import rules as rules_module
 from agentctl import strays as strays_module
-from agentctl.errors import AgentctlError, ValidationError
+from agentctl.errors import AgentctlError, NotFoundError, UsageError, ValidationError
 
 app = typer.Typer(
     name="agentctl",
@@ -352,16 +352,20 @@ def mcp_command(
 # --------------------------------------------------------------------------- #
 
 dev_app = typer.Typer(
-    name="dev", help="General utilities: PDF, SVG, CSS, Mermaid.", no_args_is_help=True
+    name="dev", help="General utilities: PDF, PPTX, SVG, CSS, Mermaid.", no_args_is_help=True
 )
 app.add_typer(dev_app, name="dev")
 
 pdf_app = typer.Typer(name="pdf", help="PDF asset extraction.", no_args_is_help=True)
 css_app = typer.Typer(name="css", help="Stylesheet colour transforms.", no_args_is_help=True)
 mermaid_app = typer.Typer(name="mermaid", help="Mermaid diagram rendering.", no_args_is_help=True)
+pptx_app = typer.Typer(
+    name="pptx", help="PowerPoint decks: read, extract, edit.", no_args_is_help=True
+)
 dev_app.add_typer(pdf_app, name="pdf")
 dev_app.add_typer(css_app, name="css")
 dev_app.add_typer(mermaid_app, name="mermaid")
+dev_app.add_typer(pptx_app, name="pptx")
 
 
 def _emit_result(data: Any, human: str | None = None, **_: Any) -> None:
@@ -455,6 +459,237 @@ def pdf_combine_svg(
             "preview": str(preview) if preview else None,
             "symbols": ids,
         }
+    )
+
+
+# --- pptx --------------------------------------------------------------------
+#
+# A .pptx is a zip of XML, so all four commands are stdlib. The library people
+# reach for (`python-pptx`) is the right answer for *authoring* slides and the
+# wrong one to make every installing project carry for reading and find/replace.
+
+
+def _replacement_pairs(replace: list[str] | None, mapping: Path | None) -> list[tuple[str, str]]:
+    """Build the old→new list from `--replace old=new` and/or `--map file.json`.
+
+    The split is on the **first** `=`, so the replacement may contain one and the
+    text being matched may not. `--map` is the way out of that, and the way to
+    pass text a shell would mangle.
+    """
+    pairs: list[tuple[str, str]] = []
+    for item in replace or []:
+        old, sep, new = item.partition("=")
+        if not sep or not old:
+            raise UsageError(
+                f"not an old=new pair: {item!r}",
+                detail="use --map for text containing '=' on the left",
+            )
+        pairs.append((old, new))
+    if mapping is not None:
+        if not mapping.is_file():
+            raise NotFoundError(f"not a file: {mapping}")
+        loaded = json.loads(mapping.read_text(encoding="utf-8"))
+        if not isinstance(loaded, dict):
+            raise ValidationError(
+                f"{mapping} is not a JSON object", detail='expected {"old": "new", ...}'
+            )
+        pairs.extend((str(key), str(value)) for key, value in loaded.items())
+    return pairs
+
+
+@pptx_app.command("inspect")
+def pptx_inspect(
+    deck: Annotated[Path, typer.Argument(help="Source .pptx (read-only).")],
+    as_json: Annotated[bool, typer.Option("--json", help="Emit the JSON envelope.")] = False,
+    show_text: Annotated[
+        bool, typer.Option("--text/--no-text", help="Include each slide's text.")
+    ] = True,
+) -> None:
+    """Report a deck's slides, their text and notes, and where its images live.
+
+    Slides come out in **display order**, which is not the order of the part
+    names: `slide7.xml` is the seventh slide that was created, and any deck that
+    has been reordered disagrees with itself. The order is read from
+    `presentation.xml`.
+
+    Media is reported in three groups, and the split is the useful part. Artwork
+    on the slides is what an extraction gets; artwork on the layouts or the
+    master is where a logo almost always is, and looking for it slide by slide
+    is how you conclude a deck has none; unreferenced files are carried in the
+    archive and drawn nowhere.
+    """
+    result = pptxdeck.inspect(deck)
+    lines = [str(deck), f"{len(result.slides)} slide(s)", ""]
+    for slide in result.slides:
+        head = f"  {slide.index:>3}. {Path(slide.part).name}"
+        marks = []
+        if slide.media:
+            marks.append(f"{len(slide.media)} image(s)")
+        if slide.notes:
+            marks.append("notes")
+        lines.append(f"{head}{'  — ' + ', '.join(marks) if marks else ''}")
+        if show_text:
+            lines.extend(f"        {line}" for line in slide.text)
+    lines += [
+        "",
+        f"media: {len(result.media)} file(s) — "
+        f"{len(result.slide_media)} on slides, "
+        f"{len(result.chrome_media)} on layouts/master, "
+        f"{len(result.unreferenced_media)} unreferenced",
+    ]
+    _emit(result.as_dict(), as_json=as_json, human="\n".join(lines))
+
+
+@pptx_app.command("extract")
+def pptx_extract(
+    deck: Annotated[Path, typer.Argument(help="Source .pptx (read-only).")],
+    out_dir: Annotated[Path, typer.Option("--out-dir", help="Destination folder.")],
+    prefix: Annotated[
+        str | None, typer.Option("--prefix", help="Output filename prefix (default: deck stem).")
+    ] = None,
+    slide: Annotated[
+        list[int] | None,
+        typer.Option("--slide", help="Restrict to these slides, by display position. Repeatable."),
+    ] = None,
+    min_bytes: Annotated[
+        int, typer.Option("--min-bytes", help="Drop files smaller than this (icons, spacers).")
+    ] = 0,
+    as_json: Annotated[bool, typer.Option("--json", help="Emit the JSON envelope.")] = False,
+) -> None:
+    """Extract the deck's images at native resolution, with a manifest.
+
+    Bytes are copied straight out of the archive — no decode and no re-encode —
+    so a photograph keeps exactly the resolution and compression it was embedded
+    with. `manifest.csv` records which slides use each file and what it was
+    called inside the deck, which is the only handle `replace-image` accepts.
+
+    Without `--slide`, everything any part references is extracted, layouts and
+    master included. With it, only what those slides use: a run filtered to one
+    slide should not quietly include the logo that sits on all forty.
+    """
+    rows = pptxdeck.extract_media(
+        deck,
+        out_dir,
+        prefix=prefix,
+        slides=list(slide) if slide else None,
+        min_bytes=min_bytes,
+    )
+    _emit(
+        {"out_dir": str(out_dir), "assets": rows},
+        as_json=as_json,
+        human=f"{len(rows)} image(s) → {out_dir} (manifest.csv written)",
+    )
+
+
+@pptx_app.command("replace-text")
+def pptx_replace_text(
+    deck: Annotated[Path, typer.Argument(help="Source .pptx (never modified).")],
+    out: Annotated[Path, typer.Option("--out", help="Destination .pptx.")],
+    replace: Annotated[
+        list[str] | None,
+        typer.Option("--replace", help="`old=new`, split on the first `=`. Repeatable."),
+    ] = None,
+    mapping: Annotated[
+        Path | None, typer.Option("--map", help='JSON object of {"old": "new"}.')
+    ] = None,
+    keep_runs: Annotated[
+        bool,
+        typer.Option("--keep-runs", help="Preserve mid-paragraph formatting; skips split matches."),
+    ] = False,
+    overwrite: Annotated[
+        bool, typer.Option("--overwrite", help="Replace an existing output file.")
+    ] = False,
+    as_json: Annotated[bool, typer.Option("--json", help="Emit the JSON envelope.")] = False,
+) -> None:
+    """Find and replace text across a deck's slides, into a new file.
+
+    Matching sees the whole paragraph, not one run at a time. PowerPoint splits a
+    paragraph at every formatting change and at boundaries nothing on screen
+    reveals, so `Total: 42` is routinely three runs and a per-run search misses
+    text that is plainly visible.
+
+    The change is still written into the individual runs whenever that gives the
+    same result, so formatting survives. Only a match that really crosses a run
+    boundary flattens the paragraph onto its first run's formatting, and the
+    report names those edits; `--keep-runs` skips them rather than pay for it.
+
+    Matching is exact and case-sensitive. Only the slides are touched: not the
+    speaker notes, not the layouts, not the master. Every other byte of the
+    archive is copied through unchanged. Editing in place is refused.
+    """
+    applied = pptxdeck.replace_text(
+        deck,
+        out,
+        _replacement_pairs(replace, mapping),
+        keep_runs=keep_runs,
+        overwrite=overwrite,
+    )
+    collapsed = sum(1 for item in applied if item.collapsed_runs > 1)
+    lines = [f"{len(applied)} replacement(s) → {out}"]
+    lines += [f"  slide {item.slide}: {item.before!r} → {item.after!r}" for item in applied]
+    if collapsed and not keep_runs:
+        lines.append(
+            f"  note: {collapsed} paragraph(s) spanned several runs and now use the first one's"
+            " formatting — re-run with --keep-runs to refuse that"
+        )
+    _emit(
+        {"out": str(out), "replacements": [item.as_dict() for item in applied]},
+        as_json=as_json,
+        human="\n".join(lines),
+    )
+
+
+@pptx_app.command("replace-image")
+def pptx_replace_image(
+    deck: Annotated[Path, typer.Argument(help="Source .pptx (never modified).")],
+    out: Annotated[Path, typer.Option("--out", help="Destination .pptx.")],
+    media: Annotated[
+        str, typer.Option("--media", help="Archive name, e.g. `image3.png`, from `inspect`.")
+    ],
+    image: Annotated[Path, typer.Option("--with", help="Replacement file, same extension.")],
+    overwrite: Annotated[
+        bool, typer.Option("--overwrite", help="Replace an existing output file.")
+    ] = False,
+    as_json: Annotated[bool, typer.Option("--json", help="Emit the JSON envelope.")] = False,
+) -> None:
+    """Swap one embedded image, copying the rest of the archive verbatim.
+
+    The extension has to match the part being replaced. That is not tidiness:
+    `[Content_Types].xml` declares the type per extension, so a PNG written over
+    `image3.jpeg` gives a deck PowerPoint calls corrupt, with nothing said at
+    write time. Convert first, then replace.
+
+    The shape's frame lives in the slide and does not move, so an image with a
+    different aspect ratio arrives stretched. Match the aspect ratio of what you
+    extracted, or edit the slide XML by hand — `unpack` is there for that.
+    """
+    result = pptxdeck.replace_media(deck, out, media=media, image=image, overwrite=overwrite)
+    _emit(
+        result,
+        as_json=as_json,
+        human=f"{result['replaced']} ← {image} ({result['bytes']} bytes) → {out}",
+    )
+
+
+@pptx_app.command("unpack")
+def pptx_unpack(
+    deck: Annotated[Path, typer.Argument(help="Source .pptx (read-only).")],
+    out_dir: Annotated[Path, typer.Option("--out-dir", help="Destination folder (recreated).")],
+    as_json: Annotated[bool, typer.Option("--json", help="Emit the JSON envelope.")] = False,
+) -> None:
+    """Explode the archive so the XML can be read and edited by hand.
+
+    The escape hatch. The other commands are named operations on a deck; this is
+    for what none of them covers. Nothing in this tool hides the format, so
+    dropping to the XML is a step down rather than a different tool — repack
+    with `cd <dir> && zip -r ../new.pptx .` and keep `[Content_Types].xml` in it.
+    """
+    names = pptxdeck.unpack(deck, out_dir)
+    slides = [name for name in names if name.startswith("ppt/slides/slide")]
+    _emit(
+        {"out_dir": str(out_dir), "parts": names},
+        as_json=as_json,
+        human=f"{len(names)} part(s) → {out_dir} ({len(slides)} slide xml)",
     )
 
 
