@@ -12,7 +12,7 @@ plugins/agent-toolkit/     a Claude Code plugin
 ├── src/agentctl/          the CLI and the MCP server
 ├── skills/                5 skills — SKILL.md, so Claude Code, Codex, Gemini and Cursor all read them
 ├── agents/                2 subagents — Claude Code only
-└── tests/                 170 tests
+└── tests/                 187 tests
 
 plugins/workstation/       a Claude Code plugin
 └── skills/                2 skills — this Arch/KDE machine's own operations
@@ -26,7 +26,7 @@ apps/                      services and CLIs, sharing `opscore`
 
 | Package | Tests |
 |---|---|
-| `plugins/agent-toolkit` | 170 |
+| `plugins/agent-toolkit` | 187 |
 | `apps/slack-bridge` | 68 unit + 10 e2e |
 | `apps/cloudprobe` | 77 |
 | `apps/opscore` | 49 |
@@ -200,7 +200,17 @@ judge: it opens the edited deck in the test that proves the output is valid.
 
 `export` is the one that gets used most: a deck becomes a folder with `index.md`,
 `images/` and a manifest, so a requirement delivered as a `.pptx` can live in a
-repository and be read, grepped and diffed like anything else in it. `pdf` is the other half of the same job — `export` gives you a deck's
+repository and be read, grepped and diffed like anything else in it. `html` is the one that earns its keep on a review deck: it lays the slides out
+from the geometry the file already carries — each shape records its own offset and
+extent in EMU, so placing them is unit conversion, not layout. Pictures, text with
+its per-run size and colour, the connectors a reviewer points arrows with, groups
+with their child-space transform, and the background inherited from the layout or
+master. Chain it into `dev pdf from-html` and a 27-slide deck becomes a 27-page
+PDF **with no LibreOffice at all**. It is an approximation and names its limits:
+tables, charts and SmartArt are drawn as a labelled outline rather than dropped,
+and text reflow is the part only a real engine does.
+
+`pdf` is the other half of the same job — `export` gives you a deck's
 *content* as markdown, `pdf` gives you what the slides *look like*, which is what
 you want when the deck is a design review and the layout is the message. It is the
 one command here that is not stdlib, because it needs a layout engine rather than a
@@ -371,7 +381,7 @@ rather than a dependency: the Klipper path needs nothing at all.
 One gate over all six packages:
 
 ```bash
-make check          # lint + typecheck + tests + plugin manifests — 396 tests
+make check          # lint + typecheck + tests + plugin manifests — 413 tests
 make integration    # the suites that touch this machine and the network
 make fmt            # ruff format + fix
 ```
