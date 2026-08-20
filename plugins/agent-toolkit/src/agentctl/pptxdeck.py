@@ -60,13 +60,14 @@ import posixpath
 import re
 import shutil
 import subprocess
+import tempfile
 import xml.etree.ElementTree as ET
 import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from xml.sax.saxutils import escape, unescape
 
-from agentctl.errors import NotFoundError, UsageError, ValidationError
+from agentctl.errors import ApiError, ConfigError, NotFoundError, UsageError, ValidationError
 from agentctl.pdfassets import identify
 
 # --------------------------------------------------------------------------- #
@@ -905,6 +906,138 @@ def export_folder(
             if deck.references.get(name) and name not in written
         ],
     }
+
+
+SOFFICE_BINARIES = ("soffice", "libreoffice")
+SOFFICE_HINT = (
+    "install LibreOffice — `pacman -S libreoffice-fresh`, `apt install libreoffice-impress`, "
+    "or `brew install --cask libreoffice`"
+)
+PDF_MAGIC = b"%PDF-"
+
+
+def _soffice() -> str:
+    """Resolve LibreOffice, or say how to get it.
+
+    There is no second option worth offering. Rendering a slide means resolving
+    the layout, the theme, the fonts and the embedded objects, and LibreOffice is
+    the only thing outside Microsoft Office that does it. A pure-Python
+    "converter" would produce a document that is not what the deck looks like,
+    which is worse than refusing — the reader cannot tell by looking.
+    """
+    for name in SOFFICE_BINARIES:
+        found = shutil.which(name)
+        if found:
+            return found
+    raise ConfigError("LibreOffice not found", detail=SOFFICE_HINT)
+
+
+def to_pdf(
+    path: Path,
+    out: Path,
+    *,
+    timeout: float = 600.0,
+    overwrite: bool = False,
+) -> dict[str, object]:
+    """Render a deck to PDF through LibreOffice, faithfully.
+
+    This is the one operation in this module that is **not** stdlib, because it
+    is the one that needs a layout engine rather than a parser. Everything else
+    here reads or rewrites the XML; this asks what the slides *look like*.
+
+    Three things about driving LibreOffice headlessly, each of which fails in a
+    way that does not look like itself:
+
+    * **It needs its own profile directory.** With the default one, a call made
+      while a desktop LibreOffice is running attaches to that instance and the
+      conversion silently does nothing. A private ``-env:UserInstallation`` makes
+      the run independent of whatever the user has open.
+    * **It exits 0 when it has not converted anything.** An unreadable file, a
+      missing filter, a profile clash — all of them can leave a zero exit status
+      and no output file. So the result is verified by opening it and checking
+      the ``%PDF-`` magic, not by trusting the return code.
+    * **It is slow on a large deck**, because it decodes every embedded asset. A
+      213 MB deck is minutes, not seconds, hence the generous default timeout and
+      an explicit message when it is hit — a killed process otherwise reports as
+      a generic failure.
+
+    Raises:
+        NotFoundError: the deck does not exist.
+        ValidationError: it is not a presentation, or LibreOffice produced nothing.
+        ConfigError: LibreOffice is not installed.
+        UsageError: the output exists and ``overwrite`` was not given.
+        ApiError: LibreOffice failed, or ran past the timeout.
+    """
+    with _open(path):  # validates that it is a presentation before spending minutes
+        pass
+    if out.exists() and not overwrite:
+        raise UsageError(f"already exists: {out}", detail="pass --overwrite to replace it")
+
+    binary = _soffice()
+    out.parent.mkdir(parents=True, exist_ok=True)
+
+    with tempfile.TemporaryDirectory(prefix="agentctl-soffice-") as scratch:
+        work = Path(scratch)
+        profile = work / "profile"
+        produced_dir = work / "out"
+        produced_dir.mkdir()
+        command = [
+            binary,
+            f"-env:UserInstallation=file://{profile}",
+            "--headless",
+            "--norestore",
+            "--convert-to",
+            "pdf",
+            "--outdir",
+            str(produced_dir),
+            str(path),
+        ]
+        try:
+            completed = subprocess.run(
+                command, capture_output=True, text=True, check=False, timeout=timeout
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise ApiError(
+                f"LibreOffice did not finish within {timeout:.0f}s",
+                detail="a deck with embedded video is slow; raise --timeout",
+            ) from exc
+
+        produced = sorted(produced_dir.glob("*.pdf"))
+        if not produced:
+            raise ValidationError(
+                "LibreOffice produced no PDF",
+                detail=(completed.stderr or completed.stdout).strip()[:300]
+                or "it exited without writing a file, which it does on a profile clash",
+            )
+        rendered = produced[0]
+        if rendered.read_bytes()[:5] != PDF_MAGIC:
+            raise ValidationError(
+                f"the output is not a PDF: {rendered.name}",
+                detail="LibreOffice wrote something else under a .pdf name",
+            )
+        shutil.move(str(rendered), out)
+
+    pages = _pdf_pages(out)
+    return {
+        "out": str(out),
+        "bytes": out.stat().st_size,
+        "pages": pages,
+        "renderer": Path(binary).name,
+    }
+
+
+def _pdf_pages(pdf: Path) -> int:
+    """Page count, straight out of the file. 0 when it cannot be read.
+
+    Counted here rather than through poppler so the command has exactly one
+    external dependency. `/Type /Page` is counted on the raw bytes, excluding
+    `/Pages`, which is the tree node rather than a leaf.
+    """
+    try:
+        blob = pdf.read_bytes()
+    except OSError:
+        return 0
+    return len(re.findall(rb"/Type\s*/Page(?![sA-Za-z])", blob))
 
 
 def unpack(path: Path, out_dir: Path) -> list[str]:
