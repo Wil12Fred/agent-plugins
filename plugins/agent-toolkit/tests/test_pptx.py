@@ -13,6 +13,7 @@ Each test names the rule it enforces.
 from __future__ import annotations
 
 import csv
+import re
 import zipfile
 from pathlib import Path
 
@@ -720,3 +721,40 @@ def test_quantizing_never_touches_a_video(
     pptxdeck.export_folder(deck, tmp_path / "out", colors=256, include_media=True)
     assert not any(p.suffix == ".mp4" for p in seen)
     assert any(p.suffix == ".png" for p in seen), "but the images were still done"
+
+
+def test_images_can_live_outside_the_markdown_and_stay_linked(
+    deck: Path, tmp_path: Path
+) -> None:
+    """Rule: splitting the two must not break the document.
+
+    The markdown is the half worth committing; the images are the half that is
+    recoverable and carries all the weight. The split is only useful if the
+    links still resolve from where `index.md` sits, which means walking *up* out
+    of its directory — `Path.relative_to` cannot express that, and reaching for
+    it is how this silently produces an unusable file.
+    """
+    out = tmp_path / "spec" / "attachments" / "deck"
+    elsewhere = tmp_path / "spec" / "refs" / "deck" / "images"
+    pptxdeck.export_folder(deck, out, images_dir=elsewhere)
+
+    body = (out / "index.md").read_text(encoding="utf-8")
+    assert "](../../refs/deck/images/" in body, body[:400]
+    assert not (out / "images").exists(), "nothing is written beside the markdown"
+    assert len(list(elsewhere.iterdir())) == 3
+
+    for link in re.findall(r"\]\(([^)]+)\)", body):
+        assert (out / link).resolve().is_file(), f"dead link: {link}"
+
+
+def test_the_default_still_puts_images_beside_the_markdown(
+    deck: Path, tmp_path: Path
+) -> None:
+    """The control: the split must be opt-in, and the simple case stay simple."""
+    out = tmp_path / "out"
+    pptxdeck.export_folder(deck, out)
+    body = (out / "index.md").read_text(encoding="utf-8")
+
+    assert "](images/" in body
+    for link in re.findall(r"\]\(([^)]+)\)", body):
+        assert (out / link).resolve().is_file(), f"dead link: {link}"

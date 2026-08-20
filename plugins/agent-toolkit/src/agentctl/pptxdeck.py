@@ -55,6 +55,7 @@ Reads the source (never modified). Writes only where told to.
 from __future__ import annotations
 
 import csv
+import os.path
 import posixpath
 import re
 import shutil
@@ -795,6 +796,7 @@ def export_folder(
     *,
     prefix: str | None = None,
     title: str | None = None,
+    images_dir: Path | None = None,
     max_width: int = 0,
     colors: int = 0,
     include_media: bool = False,
@@ -817,6 +819,13 @@ def export_folder(
     pixel of resolution**, and resolution is what makes an annotation readable.
     Reach for it before reaching for a smaller ``max_width``.
 
+    ``images_dir`` puts the images somewhere else, with ``index.md`` linking to
+    them relatively. The markdown is the part worth keeping under version
+    control and the images are usually the part that must not be — they are
+    recoverable from wherever the deck came from, and they are the entire weight.
+    Splitting them by hand means rewriting every link, which is why this is an
+    option rather than advice.
+
     ``include_media`` adds video and other non-image parts. Off by default for
     the same reason: one embedded clip was 94 MB on its own.
 
@@ -830,8 +839,12 @@ def export_folder(
         )
 
     prefix = prefix or path.stem.replace(" ", "_")
-    images_dir = out_dir / "images"
-    images_dir.mkdir(parents=True, exist_ok=True)
+    target_dir = images_dir if images_dir is not None else out_dir / "images"
+    target_dir.mkdir(parents=True, exist_ok=True)
+    # Relative to `out_dir`, because that is where `index.md` is read from.
+    # `os.path.relpath` rather than `Path.relative_to`, which refuses to walk up
+    # and so cannot express the case this option exists for.
+    link_base = Path(os.path.relpath(target_dir.resolve(), out_dir.resolve())).as_posix()
 
     wanted = [name for name in deck.media if deck.references.get(name)]
     if not include_media:
@@ -842,14 +855,14 @@ def export_folder(
     total_bytes = 0
     with _open(path) as archive:
         for index, name in enumerate(wanted, start=1):
-            target = images_dir / f"{prefix}_{index}{Path(name).suffix.lower()}"
+            target = target_dir / f"{prefix}_{index}{Path(name).suffix.lower()}"
             target.write_bytes(archive.read(name))
             measurable = target.suffix.lower() in MEASURABLE_SUFFIXES
             before = identify(target, timeout=IDENTIFY_TIMEOUT) if measurable else None
             after = _downscale(target, max_width) if (measurable and max_width) else None
             if measurable and colors:
                 _quantize(target, colors)
-            written[name] = f"images/{target.name}"
+            written[name] = f"{link_base}/{target.name}"
             total_bytes += target.stat().st_size
             rows.append(
                 {
@@ -866,6 +879,7 @@ def export_folder(
                 }
             )
 
+    out_dir.mkdir(parents=True, exist_ok=True)
     index_md = out_dir / "index.md"
     index_md.write_text(
         _markdown(deck, written, title or path.stem), encoding="utf-8"
@@ -880,6 +894,7 @@ def export_folder(
 
     return {
         "out_dir": str(out_dir),
+        "images_dir": str(target_dir),
         "index": str(index_md),
         "slides": len(deck.slides),
         "images": len(rows),
