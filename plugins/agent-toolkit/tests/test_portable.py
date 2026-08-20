@@ -197,7 +197,9 @@ def test_a_copy_whose_imports_were_rewritten_is_still_a_duplicate(tmp_path: Path
     (root / "src" / "helper.py").write_text("from acme.core import x\n" + GENERIC, encoding="utf-8")
     shared = tmp_path / "shared"
     (shared / "lib").mkdir(parents=True)
-    (shared / "lib" / "helper.py").write_text("from shared.core import x\n" + GENERIC, encoding="utf-8")
+    (shared / "lib" / "helper.py").write_text(
+        "from shared.core import x\n" + GENERIC, encoding="utf-8"
+    )
 
     result = portable.survey(root, target=shared)
 

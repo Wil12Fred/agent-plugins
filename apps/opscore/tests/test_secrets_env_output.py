@@ -18,7 +18,6 @@ from opscore.errors import BridgeError, ConfigError
 from opscore.output import Output
 from opscore.secrets import redact
 
-
 # --------------------------------------------------------------------------- #
 # Redaction
 # --------------------------------------------------------------------------- #

@@ -149,8 +149,8 @@ def _call(name: str, arguments: dict[str, Any], default_root: Path) -> tuple[str
 
     if name == "repo_detect":
         only = arguments.get("only")
-        result = detect_module.detect(root, only=only if isinstance(only, list) else None)
-        return json.dumps({"ok": True, "data": result.as_dict()}, indent=2), False
+        detection = detect_module.detect(root, only=only if isinstance(only, list) else None)
+        return json.dumps({"ok": True, "data": detection.as_dict()}, indent=2), False
 
     if name == "repo_rules":
         declaration = rules_module.load(root)
@@ -162,13 +162,14 @@ def _call(name: str, arguments: dict[str, Any], default_root: Path) -> tuple[str
     if name == "repo_portable":
         raw_target = arguments.get("target")
         exclude = arguments.get("exclude")
-        result = portable_module.survey(
+        wanted = raw_target if isinstance(raw_target, str) and raw_target else None
+        survey = portable_module.survey(
             root,
-            target=Path(raw_target).expanduser() if isinstance(raw_target, str) and raw_target else None,
+            target=Path(wanted).expanduser() if wanted else None,
             expect_language=arguments.get("expect_language") or None,
             exclude=exclude if isinstance(exclude, list) else (),
         )
-        return json.dumps({"ok": True, "data": result.as_dict()}, indent=2), False
+        return json.dumps({"ok": True, "data": survey.as_dict()}, indent=2), False
 
     if name == "repo_strays":
         if not detect_module.code_roots(root):
