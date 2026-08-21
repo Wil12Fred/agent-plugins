@@ -139,3 +139,49 @@ def test_an_existing_output_is_refused_unless_overwrite(deck: Path, tmp_path: Pa
     with pytest.raises(UsageError, match="already exists"):
         pptxsplit.split(deck, out, [1])
     assert pptxsplit.split(deck, out, [1], overwrite=True)["slides"] == [1]
+
+
+def test_oversized_media_is_emptied_not_removed(tmp_path: Path) -> None:
+    """The part survives with one byte in it.
+
+    Deleting it would leave the slide's relationship pointing at nothing, and
+    PowerPoint calls that corrupt — so the file would not open at all, which is
+    a worse failure than the one being fixed.
+    """
+    deck = build_deck(tmp_path / "in.pptx")
+    # The video, because that is the real case: an 89 MB mp4 on one slide is
+    # what pushed three review packets past Drive's 100 MB conversion limit.
+    heavy = _fatten(deck, "ppt/media/media1.mp4", 5_000_000)
+    out = tmp_path / "out.pptx"
+
+    result = pptxsplit.split(deck, out, [1, 2, 3], stub_media_over=1_000_000)
+
+    with zipfile.ZipFile(out) as archive:
+        assert heavy in archive.namelist(), "the part must stay, or the deck is corrupt"
+        assert archive.read(heavy) == b"\0"
+    assert [s["part"] for s in result["stubbed"]] == [heavy]
+    assert out.stat().st_size < 1_000_000
+
+
+def test_media_under_the_threshold_is_untouched(tmp_path: Path) -> None:
+    """The control: without it, a stub-everything bug would pass the test above."""
+    deck = build_deck(tmp_path / "in.pptx")
+    with zipfile.ZipFile(deck) as archive:
+        payload = archive.read("ppt/media/image1.png")
+    out = tmp_path / "out.pptx"
+
+    result = pptxsplit.split(deck, out, [1, 2, 3], stub_media_over=1_000_000)
+
+    with zipfile.ZipFile(out) as archive:
+        assert archive.read("ppt/media/image1.png") == payload
+    assert result["stubbed"] == []
+
+
+def _fatten(deck: Path, part: str, size: int) -> str:
+    """Rewrite one media part with `size` bytes, leaving the rest of the zip alone."""
+    with zipfile.ZipFile(deck) as archive:
+        entries = [(i, archive.read(i.filename)) for i in archive.infolist()]
+    with zipfile.ZipFile(deck, "w", zipfile.ZIP_DEFLATED) as archive:
+        for info, data in entries:
+            archive.writestr(info, b"z" * size if info.filename == part else data)
+    return part

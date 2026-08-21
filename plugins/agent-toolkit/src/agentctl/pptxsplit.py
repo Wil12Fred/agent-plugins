@@ -119,14 +119,31 @@ def _reachable(archive: zipfile.ZipFile, roots: list[str], drop: set[str]) -> se
     return keep
 
 
+#: A one-byte file, written where an oversized media part used to be.
+#: Deleting the part instead would leave the slide's relationship dangling and
+#: PowerPoint calls that corrupt; keeping the name and emptying the bytes lets
+#: the file open with the media simply absent.
+_STUB = b"\0"
+
+
 def split(
     deck: Path,
     out: Path,
     slides: list[int],
     *,
     overwrite: bool = False,
+    stub_media_over: int | None = None,
 ) -> dict[str, object]:
     """Write a deck containing only ``slides``, in display order.
+
+    Args:
+        stub_media_over: replace any ``ppt/media`` part larger than this many
+            bytes with a stub. A review packet inherits whatever the slide
+            embeds, and one slide of a client deck can carry an 89 MB video —
+            which pushed three packets past **Google Drive's 100 MB limit for
+            converting a .pptx to Slides**, so the reviewer could not open the
+            very file made for them. The video is usually delivered separately
+            anyway; what the reviewer needs is the slide's instructions.
 
     Raises:
         UsageError: the output exists, or would overwrite the source.
@@ -158,9 +175,18 @@ def split(
 
         out.parent.mkdir(parents=True, exist_ok=True)
         original_bytes = deck.stat().st_size
+        stubbed: list[dict[str, object]] = []
         with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as written:
             for info in archive.infolist():
                 if info.filename not in keep:
+                    continue
+                if (
+                    stub_media_over is not None
+                    and info.filename.startswith("ppt/media/")
+                    and info.file_size > stub_media_over
+                ):
+                    stubbed.append({"part": info.filename, "bytes": info.file_size})
+                    written.writestr(info.filename, _STUB)
                     continue
                 if info.filename == presentation:
                     written.writestr(info, pres_xml)
@@ -177,6 +203,7 @@ def split(
         "parts": len(keep),
         "bytes": out.stat().st_size,
         "source_bytes": original_bytes,
+        "stubbed": stubbed,
     }
 
 

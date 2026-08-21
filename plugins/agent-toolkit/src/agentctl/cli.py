@@ -714,8 +714,7 @@ def pptx_export(
     skipped = result["skipped_media"]
     megabytes = result["bytes"] / 1e6 if isinstance(result["bytes"], int) else 0.0
     human = (
-        f"{result['slides']} slide(s), {result['images']} image(s), "
-        f"{megabytes:.1f} MB → {out_dir}"
+        f"{result['slides']} slide(s), {result['images']} image(s), {megabytes:.1f} MB → {out_dir}"
     )
     if isinstance(skipped, list) and skipped:
         human += f"\n  skipped (not an image): {', '.join(skipped)}"
@@ -816,12 +815,18 @@ def pptx_replace_image(
 def pptx_split(
     deck: Annotated[Path, typer.Argument(help="Source .pptx (read-only).")],
     out: Annotated[Path, typer.Option("--out", help="Destination .pptx.")],
-    slides: Annotated[
-        str, typer.Option("--slides", help='Display positions, e.g. "1,3,5-7".')
-    ],
+    slides: Annotated[str, typer.Option("--slides", help='Display positions, e.g. "1,3,5-7".')],
     overwrite: Annotated[
         bool, typer.Option("--overwrite", help="Replace an existing output file.")
     ] = False,
+    stub_media_over: Annotated[
+        int | None,
+        typer.Option(
+            "--stub-media-over",
+            help="Empty any embedded media larger than this many MB. "
+            "Google Drive converts a .pptx to Slides only up to 100 MB.",
+        ),
+    ] = None,
     as_json: Annotated[bool, typer.Option("--json", help="Emit the JSON envelope.")] = False,
 ) -> None:
     """Cut a deck down to the slides you name, dropping everything else.
@@ -837,13 +842,21 @@ def pptx_split(
     silently shrinks omits exactly the slide somebody meant to include.
     """
     wanted = pptxsplit.parse_slides(slides, 10**6)
-    result = pptxsplit.split(deck, out, wanted, overwrite=overwrite)
+    result = pptxsplit.split(
+        deck,
+        out,
+        wanted,
+        overwrite=overwrite,
+        stub_media_over=None if stub_media_over is None else stub_media_over * 1_048_576,
+    )
     before = result["source_bytes"] / 1e6 if isinstance(result["source_bytes"], int) else 0.0
     after = result["bytes"] / 1e6 if isinstance(result["bytes"], int) else 0.0
+    stubbed = result.get("stubbed") or []
+    note = f", {len(stubbed)} media vaciado(s)" if stubbed else ""
     _emit(
         result,
         as_json=as_json,
-        human=f"{len(wanted)} slide(s) → {out}  ({after:.1f} MB, from {before:.0f} MB)",
+        human=f"{len(wanted)} slide(s) → {out}  ({after:.1f} MB, from {before:.0f} MB{note})",
     )
 
 
@@ -880,9 +893,7 @@ def pptx_html(
     Pair with `dev pdf from-html` to get a PDF; the `@page` size is already set to
     the slide, so one slide is one page.
     """
-    result = pptxlayout.build(
-        deck, out_dir, title=title, max_width=max_width, overwrite=overwrite
-    )
+    result = pptxlayout.build(deck, out_dir, title=title, max_width=max_width, overwrite=overwrite)
     approximated = result["approximated"]
     page = result["slide_pt"]
     size = f"{page[0]}×{page[1]}pt" if isinstance(page, list) else "unknown"
@@ -1293,4 +1304,3 @@ def drive_deliver(
     elif result["url"]:
         lines.append(f"\n  {result['url']}")
     _emit(result, as_json=as_json, human="\n".join(lines))
-
