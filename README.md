@@ -10,12 +10,12 @@ tools/vscode-terminal-bridge/   a VS Code extension: type into one *specific* te
 
 plugins/agent-toolkit/     a Claude Code plugin
 ├── src/agentctl/          the CLI and the MCP server
-├── skills/                5 skills — SKILL.md, so Claude Code, Codex, Gemini and Cursor all read them
+├── skills/                6 skills — SKILL.md, so Claude Code, Codex, Gemini and Cursor all read them
 ├── agents/                2 subagents — Claude Code only
 └── tests/                 199 tests
 
 plugins/workstation/       a Claude Code plugin
-└── skills/                2 skills — this Arch/KDE machine's own operations
+└── skills/                4 skills — this Arch/KDE machine's own operations
 
 apps/                      services and CLIs, sharing `opscore`
 ├── opscore/               errors, output, secrets, env, guard, http, sql guard
@@ -316,13 +316,16 @@ Codex CLI, Gemini CLI and Cursor.
 | `vetting-third-party-tooling` | never install a third-party MCP — clone, read, score 1-10, adapt or escalate |
 | `verified-state-contract` | every claim about a live system carries the commit it was measured against |
 | `measuring-technical-debt` | the ratchet, and how a debt signal ends up unable to observe what it names |
+| `closing-a-review-loop` | why only a Stop hook cannot be skipped, and six ways a convergence gate fails closed while its header says it fails open |
 
 ## This workstation
 
-[`plugins/workstation`](plugins/workstation) is the odd one out: two skills about
-**this Arch/KDE machine** rather than about any project — recovering the network
-after a system update, pacman, and why KDE stops opening Slack notifications
-after a Slack update.
+[`plugins/workstation`](plugins/workstation) is the odd one out: four skills
+about **this Arch/KDE machine** rather than about any project — recovering the
+network after a system update, pacman and wedged devices, why KDE stops opening
+Slack notifications after a Slack update, what breaks when the monitor cable
+moves from one GPU to the other, and where a sound setting actually lives when
+the machine keeps forgetting it.
 
 It is here rather than in a work repository because it is about the machine, not
 the employer. A colleague cloning a company repo should not inherit skills for a

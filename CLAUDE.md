@@ -20,6 +20,8 @@ They are not only shipped from here, they are the standard held here:
 - `vetting-third-party-tooling` — before adding any dependency you did not write
 - `verified-state-contract` — before documenting how a live system behaves
 - `measuring-technical-debt` — before adding a gate, and when one stops moving
+- `closing-a-review-loop` — before calling reviewed work finished, and when
+  building anything that decides that for you
 
 ## Auditing this repository
 
