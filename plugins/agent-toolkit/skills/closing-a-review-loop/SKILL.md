@@ -193,22 +193,34 @@ is that the obvious experiment — run it many times, count the reds — measure
 the wrong thing whenever **the condition that makes it flaky is the condition
 repetition removes**.
 
-One case, and it cost three rounds. A control test hammered an unlocked
-connection until a race appeared, and failed when it saw none. It failed only on
-a busy machine, because contention *serialises* the interleaving that produces a
-race. So every green run on a quiet box was consistent with the test being
-broken. Two reviewers reported 40/40 and 60/60 clean; the loop owner reported
-three consecutive clean gates and called it validated. All three were sound
-measurements of nothing.
+One case, and it cost four rounds — the fourth because the first diagnosis was
+wrong in an instructive way. A control test hammered an unlocked connection
+until a race appeared, and failed when it saw none. Two reviewers reported 40/40
+and 60/60 clean; the loop owner reported three consecutive clean gates and
+called it validated. All three were sound measurements of nothing.
 
-What found it was changing the *condition*, not the count: eight suites at once
-went 2 of 8 red. What confirmed the fix was the same condition, not a longer
-streak.
+Changing the *load* found it: eight suites at once went 2 of 8 red. So the
+lesson was written down as "contention serialises the interleaving, therefore
+repetition on a quiet machine cannot see it" — and that was **half right, which
+is worse than wrong, because it closed the question.**
 
-So before quoting a green streak as evidence: name the condition the failure
-needs, and say whether your runs had it. If you cannot name it, you have not
-diagnosed the flake — and a test whose failures you cannot explain should not be
-in a gate, whichever way the last hundred runs went.
+A later audit ran the same test at rest under a *different invocation* — the
+module on its own, rather than the whole suite — and it went red there too, on
+an idle machine. Three runs of the ordinary developer command would have found
+it. The condition was never really load; load was one thing that happened to
+serialise the schedule, and the invocation was another, cheaper one that nobody
+varied because the first explanation already fit.
+
+**A flake rate is a property of the invocation as much as of the machine, and
+repeating one invocation measures only that invocation.** Before quoting a green
+streak: name the condition the failure needs, say whether your runs had it, and
+list what you did *not* vary. The first plausible mechanism is the one that
+stops people looking.
+
+One more caution from the same episode: those two audits measured that
+middle condition six-fold apart (3 of 30 against 36 of 60). Two observers
+disagreeing by that much about a rate is normal for races and is not a reason to
+discard either; it is a reason not to quote a single figure for one.
 
 The generalisation is worth more than the case. **When a test can fail for a
 reason that is not about the code, it does not belong in the gate.** A useful
