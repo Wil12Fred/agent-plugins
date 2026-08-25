@@ -229,6 +229,28 @@ were reintroduced?* The control above passed 8 times out of 8 with the shipped
 lock deleted — it never touched the shipped code at all — and its own docstring
 said so plainly, one round before anyone read it as grounds for deletion.
 
+## Gate after the last edit, not before the last commit
+
+A loop owner ran the gate three times, saw it green three times, then wrote the
+round's findings into a prose file and committed — all in one step. The findings
+file was covered by a guard. The gate had never seen it. What shipped was red,
+and the report said "green, three consecutive runs".
+
+This is the *second* time that loop reported a red gate as green, and the two
+have nothing in common except the conclusion. The first was misreading an exit
+code beside a passing test count. This one had the exit code right and measured
+a tree that no longer existed by the time of the commit.
+
+So the rule is not "read the exit code" — that was already learned and did not
+help. It is: **the gate must be the last thing that runs before the commit, with
+nothing edited in between.** If you write anything after the gate — a backlog
+entry, a changelog line, a docstring — you have not gated what you are shipping.
+
+Worth knowing why this bites a mature loop specifically: the more a project
+guards its own prose, the more likely it is that *recording a finding* is itself
+a change the gate judges. A repository with a guard over its documentation has
+made its own report a build input.
+
 ## Two things that keep happening
 
 **A guard inherits the blind spot it was built for.** A test written to catch
