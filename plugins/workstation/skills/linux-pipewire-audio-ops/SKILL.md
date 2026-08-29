@@ -1,6 +1,6 @@
 ---
 name: linux-pipewire-audio-ops
-description: Use when audio on this Arch/KDE machine loses a device, forgets a setting between reboots, pauses on its own, or records silence — choosing between automatic card profiling and raw PCM nodes, finding which of three layers actually holds a setting, and a Bluetooth speaker that connects without any audio endpoint. Do not use when the monitor's sound moved because the display cable changed GPU (that is `linux-gpu-output-switch`), nor when a capture device returns I/O errors at the driver level with no samples at all (that is the wedged-device section of `linux-workstation-ops`).
+description: Use when audio on this Arch/KDE machine loses a device, forgets a setting between reboots, pauses on its own, or records silence — choosing between automatic card profiling and raw PCM nodes, finding which of three layers actually holds a setting, and a Bluetooth speaker that connects without any audio endpoint — including how to keep that one from recurring. Do not use when the monitor's sound moved because the display cable changed GPU (that is `linux-gpu-output-switch`), nor when a capture device returns I/O errors at the driver level with no samples at all (that is the wedged-device section of `linux-workstation-ops`).
 ---
 
 # Sound server operations
@@ -155,8 +155,24 @@ section of `linux-workstation-ops`.
 
 ## 5. A Bluetooth speaker that connects but produces no device
 
-The device pairs, connects, and shows as connected — and the sound server never
-publishes a sink. Look at what the Bluetooth daemon actually negotiated:
+The device pairs, connects, shows as connected — and the sound server never
+publishes a sink. Nothing is broken in the speaker: **a Bluetooth audio
+connection completes in two independent layers, and only the first one is what
+`bluetoothctl` reports.**
+
+| Layer | What proves it | Reported by |
+|---|---|---|
+| the radio link | `Connected: yes` | `bluetoothctl info` |
+| the audio transport | a `sep*/fd*` endpoint | `busctl tree org.bluez` |
+
+Without the second, there is nothing for the sound server to build a card from.
+So `bluetoothctl` saying "connected" while the sound panel shows no speaker is
+not a contradiction — the two are looking at different layers, and both are
+telling the truth.
+
+### Reading which layer failed
+
+Current state comes from the object tree:
 
 ```bash
 busctl tree org.bluez | grep -A4 dev_XX_XX_XX_XX_XX_XX
@@ -171,11 +187,37 @@ dev_…
 └── sep2
 ```
 
-**Only `avrcp` means the connection was negotiated without audio.** The sound
-server registers the audio endpoints with the Bluetooth daemon at startup; a
-device that connects while those endpoints are not registered — after the sound
-server is restarted, for instance — completes with the control profile alone.
-There is nothing to add and no event to wait for: the fix is to renegotiate.
+**Only `avrcp` means the connection was negotiated without audio.**
+
+After the fact the tree is useless — it shows now, not what happened. The
+Bluetooth daemon's journal is what says whether the transport ever came up, and
+the one line that settles it is the file descriptor going ready:
+
+```bash
+journalctl -b -o short-iso | grep -iE "bluetoothd|dev_XX_XX_XX_XX_XX_XX"
+```
+
+```
+# failed: the link came up, the transport never did
+…  Unable to get Hands-Free Voice gateway SDP record: Host is down
+…  a2dp.c:load_remote_sep() Unable to load LastUsed: rseid 1 not found
+   (and no fd line at all)
+
+# succeeded, moments later, same device
+…  No SDP records found for Hands-Free Voice gateway     ← benign: a speaker has no HFP
+…  /org/bluez/hci0/dev_…/sep1/fd0: fd(30) ready          ← THE line to grep for
+```
+
+Do not read the Hands-Free complaints as the fault. A speaker legitimately has
+no headset profile, and both a working and a failing connection log something
+about it. **`fd(N) ready` is the only signature that separates them.**
+
+### The immediate fix: renegotiate
+
+The sound server registers the audio endpoints with the Bluetooth daemon; a
+device that connects while those endpoints are not registered — just after the
+sound server restarted, or racing it at login — completes with the control
+profile alone. There is nothing to add and no event to wait for:
 
 ```bash
 bluetoothctl disconnect XX:XX:XX:XX:XX:XX
@@ -184,13 +226,80 @@ bluetoothctl connect XX:XX:XX:XX:XX:XX
 pactl list short cards | grep bluez     # a bluez_card must now exist
 ```
 
+### Why it keeps happening, and what does not fix it
+
+This is a startup race between the sound server and the Bluetooth daemon,
+reported upstream as **[bluez#1545](https://github.com/bluez/bluez/issues/1545)
+and still open** — no patch, no version to upgrade to, and the only resolution
+the issue documents is manual intervention. So renegotiating is not a
+workaround for want of a better one; it is the remedy that exists.
+
+Two dead ends worth not re-walking:
+
+- **A first-connection A2DP failure was also a real bluez bug — 5.80, fixed in
+  5.82.** Anything newer has that one already. Check the installed version
+  before believing a forum thread that matches the symptom.
+- **The saved state is usually innocent.** A `bluez5.profile = off` property on
+  the device is an initial value, not the active profile; confirm against
+  `pactl list cards` (`Active Profile`) and the sound server's `default-routes`
+  before deleting any state file.
+
+### Making it not recur
+
+Two layers, because the declarative half narrows the race but cannot close it.
+
+**Narrow the window** — have the sound server connect the profile itself rather
+than wait for the negotiation to come out right:
+
+```
+# ~/.config/wireplumber/wireplumber.conf.d/51-bluetooth-autoconnect.conf
+monitor.bluez.rules = [
+  {
+    matches = [ { device.name = "~bluez_card.*" } ]
+    actions = { update-props = { bluez5.auto-connect = [ a2dp_sink ] } }
+  }
+]
+```
+
+**Catch what still slips through** — a small user service that renegotiates when
+a connected audio device has no card. Three constraints make it safe rather than
+a new source of faults:
+
+- **Act only on devices advertising `Audio Sink`.** A Bluetooth mouse or
+  keyboard is connected and correctly has no card; a guard that does not filter
+  will disconnect input devices in a loop.
+- **A cooldown between attempts per device**, so a genuinely mute device is not
+  hammered.
+- **A retry ceiling**, after which it gives up and leaves the state readable.
+
+```bash
+is_audio_sink() { bluetoothctl info "$1" | grep -q "Audio Sink"; }
+has_card()      { pactl list short cards | grep -q "bluez_card.${1//:/_}"; }
+```
+
+### Proving the guard, which is the part that gets skipped
+
+A guard that has never fired is not evidence of anything. This failure is
+**reproducible on demand** — restarting the sound server drops the card of an
+already-connected device, which is the exact condition:
+
+```bash
+systemctl --user restart wireplumber
+# watch: the card disappears, the guard renegotiates, the card returns (~12s)
+```
+
+Warn whoever is listening first; it interrupts audio for those seconds.
+
 Related: `bluetooth.autoswitch-to-headset-profile` trades stereo quality for a
 microphone when something records. If music degrades the moment a call starts,
 that is this setting working as designed, not a fault.
 
 ## 6. Order to work in
 
-1. `wpctl status` — is the device listed at all? If not: §1 (profile) or §5 (Bluetooth).
+1. `wpctl status` — is the device listed at all? If not: §1 (profile) or §5
+   (Bluetooth). For Bluetooth, do not stop at `Connected: yes` — grep the
+   daemon's journal for `fd(N) ready`, which is the only line that proves the
+   audio transport came up (§5).
 2. `wpctl settings | grep Saved` — any override explaining "it forgets"? §3.
 3. For a silent input: `amixer` route, then boost, then `/proc/asound/…/status`. §4.
 4. Before declaring it fixed, restart the sound server and check the setting held:
@@ -198,7 +307,8 @@ that is this setting working as designed, not a fault.
    systemctl --user restart wireplumber
    ```
    A setting that survives a restart is not yet proven to survive a boot if it
-   lives in the ALSA layer — that needs `alsactl store` as well.
+   lives in the ALSA layer — that needs `alsactl store` as well. The same
+   restart is how a Bluetooth reconnect guard is proven to fire at all (§5).
 
 ## Safety rules
 
@@ -217,3 +327,8 @@ that is this setting working as designed, not a fault.
   because the display cable changed GPU.
 - `linux-workstation-ops` — wedged devices, package/kernel skew, and the rest of
   this machine's operations.
+- [bluez#1545](https://github.com/bluez/bluez/issues/1545) — the open upstream
+  race between the sound server and the Bluetooth daemon behind §5. Check
+  whether it has closed before assuming renegotiation is still required.
+- [WirePlumber — Bluetooth configuration](https://pipewire.pages.freedesktop.org/wireplumber/daemon/configuration/bluetooth.html)
+  — the authority for `bluez5.*` properties, including `bluez5.auto-connect`.
