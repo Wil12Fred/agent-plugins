@@ -1,18 +1,19 @@
 ---
 name: linux-pipewire-audio-ops
-description: Use when audio on this Arch/KDE machine loses a device, forgets a setting between reboots, pauses on its own, or records silence — choosing between automatic card profiling and raw PCM nodes, finding which of three layers actually holds a setting, and a Bluetooth speaker that connects without any audio endpoint — including how to keep that one from recurring. Do not use when the monitor's sound moved because the display cable changed GPU (that is `linux-gpu-output-switch`), nor when a capture device returns I/O errors at the driver level with no samples at all (that is the wedged-device section of `linux-workstation-ops`).
+description: Use when audio on this Arch/KDE machine loses a device, forgets a setting between reboots, pauses on its own, or records silence — choosing between automatic card profiling and raw PCM nodes, finding which of three layers actually holds a setting, and a Bluetooth speaker that connects without any audio endpoint, or that connects and never becomes the default output — including how to keep those from recurring. Do not use when the monitor's sound moved because the display cable changed GPU (that is `linux-gpu-output-switch`), nor when a capture device returns I/O errors at the driver level with no samples at all (that is the wedged-device section of `linux-workstation-ops`).
 ---
 
 # Sound server operations
 
 ## Overview
 
-Three faults account for nearly everything that goes wrong with audio here, and
+Four faults account for nearly everything that goes wrong with audio here, and
 each has a different owner:
 
 | Symptom | Owner | Section |
 |---|---|---|
 | a device is missing from the list | the card's profile, or Bluetooth | 1, 5 |
+| a device is present but never selected | node priority, not the device | 5 |
 | a setting is forgotten on every boot | the wrong layer holds it | 2, 3 |
 | the microphone records silence | the mixer route, not the sound server | 4 |
 
@@ -244,6 +245,37 @@ Two dead ends worth not re-walking:
   `pactl list cards` (`Active Profile`) and the sound server's `default-routes`
   before deleting any state file.
 
+### It connects, but never becomes the default output
+
+A separate complaint with a separate cause, and Bluetooth is not it. Auto-
+selection is decided by node priority, and a Bluetooth sink arrives with a
+middling one — around 1010. Any wired output that was given a hand-tuned
+priority to make it the boot default will therefore outrank the speaker
+**forever**, and it has to be picked by hand on every connection.
+
+```bash
+# what actually decides it — read this before blaming the device
+pw-dump | grep -E "priority.session|node.description"
+```
+
+Raise the Bluetooth sink above the wired one, and the ordering becomes what is
+wanted by itself: the speaker while it is on, the wired output when it is off.
+
+```
+monitor.bluez.rules = [
+  {
+    matches = [ { node.name = "~bluez_output\\..*" } ]
+    actions = { update-props = { priority.driver = 1300, priority.session = 1300 } }
+  }
+]
+```
+
+The trap is that the hand-tuned priority is usually *correct* and documented —
+written to make a monitor the default at boot — so nothing looks wrong until a
+device that should outrank it shows up. An explicitly chosen default is stored
+separately and will hold for the current session, which is exactly what hides
+the problem: it works until the device goes away and comes back.
+
 ### Making it not recur
 
 Two layers, because the declarative half narrows the race but cannot close it.
@@ -277,6 +309,25 @@ is_audio_sink() { bluetoothctl info "$1" | grep -q "Audio Sink"; }
 has_card()      { pactl list short cards | grep -q "bluez_card.${1//:/_}"; }
 ```
 
+**Drive it from events, not a poll.** `gdbus monitor --system --dest org.bluez`
+subscribes as an ordinary client and works unprivileged; `dbus-monitor --system`
+asks to become a bus monitor and is refused for a normal user. Keep a slow sweep
+as a backstop for a missed signal, and give the card a few seconds to appear on
+its own before acting — most connections need no help at all.
+
+Be honest about what this buys. It removes the poll latency from *detection*,
+but not from the total: the remedy is a full reconnect, and that is radio time.
+Measured here, 12s of which 5s was poll and grace became 9s of which 6s is the
+reconnect itself. **The reconnect is the floor**; tuning the guard below it is
+not available.
+
+**A dead end, measured:** `Device1.ConnectProfile(a2dp_sink)` looks like the
+cheap remedy — reconnect one profile instead of the whole device — and bluez
+accepts the call. It never once produced a card, and cost 3s before the remedy
+that works. The reason it cannot work is the same fact the whole section rests
+on: **the endpoint that is missing is the local one**, so asking the daemon to
+connect the profile leaves it with nothing to connect against.
+
 ### Proving the guard, which is the part that gets skipped
 
 A guard that has never fired is not evidence of anything. This failure is
@@ -285,7 +336,7 @@ already-connected device, which is the exact condition:
 
 ```bash
 systemctl --user restart wireplumber
-# watch: the card disappears, the guard renegotiates, the card returns (~12s)
+# watch: the card disappears, the guard renegotiates, the card returns (~9s)
 ```
 
 Warn whoever is listening first; it interrupts audio for those seconds.
