@@ -1,0 +1,127 @@
+#!/usr/bin/env bash
+# camctl — list and enable/disable video-capture devices (webcams) per device,
+# using the USB `authorized` flag (does not touch the driver of the others).
+#
+# Usage:
+#   camctl [list]          list cameras and their state (ON/OFF, held by…)
+#   camctl off  <sel>      disable a camera (free any holder, then authorized=0)
+#   camctl on   <sel>      enable it (authorized=1, and modprobe uvcvideo if absent)
+#   camctl toggle <sel>    flip it
+# <sel> = the USB node (e.g. 3-7) or the id vendor:product (e.g. 093a:2700).
+# With no <sel>, on/off/toggle act on the ONLY camera when exactly one is present.
+#
+# The privileged actions (writing authorized, modprobe, fuser -k) use sudo; a
+# narrow /etc/sudoers.d rule can make them passwordless — see the skill README.
+set -u
+shopt -s nullglob
+
+# Deauthorizing a device tears its interfaces down, so a camera that is already
+# OFF has no Video-class (0e) interface left to recognise it by. We remember the
+# ones camctl turned off (keyed by vendor:product, which survives node renumber)
+# so `on`/`list` can still find them; a product name matching /cam/i is the
+# fallback for a camera deauthorized by other means.
+STATE="${XDG_CACHE_HOME:-$HOME/.cache}/camctl/off"
+
+vidpid_of() { echo "$(cat "$1/idVendor" 2>/dev/null):$(cat "$1/idProduct" 2>/dev/null)"; }
+
+is_camera() {                       # $1 = /sys/.../<node> -> 0 if it is a camera
+  local d="$1" intf
+  [ -f "$d/idVendor" ] || return 1
+  for intf in "$d":*; do            # ON: a live Video-class interface
+    [ -f "$intf/bInterfaceClass" ] || continue
+    [ "$(cat "$intf/bInterfaceClass")" = "0e" ] && return 0
+  done
+  # OFF (no interfaces): trust the state file, or a camera-looking product name
+  if [ "$(cat "$d/authorized" 2>/dev/null)" = 0 ]; then
+    [ -f "$STATE" ] && grep -qxF "$(vidpid_of "$d")" "$STATE" && return 0
+    case "$(cat "$d/product" 2>/dev/null)" in *[Cc]am*) return 0;; esac
+  fi
+  return 1
+}
+
+cam_nodes() {                       # basenames of every camera USB device
+  local d
+  for d in /sys/bus/usb/devices/[0-9]*-*; do is_camera "$d" && basename "$d"; done | sort -u
+}
+
+video_nodes_of() {                  # $1 = usb node -> /dev/videoN...
+  local dev="/sys/bus/usb/devices/$1" v
+  for v in /sys/class/video4linux/video*; do
+    [ -e "$v" ] || continue
+    case "$(readlink -f "$v/device")" in "$dev"*) echo "/dev/$(basename "$v")";; esac
+  done
+}
+
+holders_of() {                      # $1 = usb node -> "PID:comm ..."
+  local vn out="" p
+  for vn in $(video_nodes_of "$1"); do
+    for p in /proc/[0-9]*; do
+      ls -l "$p/fd" 2>/dev/null | grep -q "${vn}\$" && out="$out $(basename "$p"):$(cat "$p/comm" 2>/dev/null)"
+    done
+  done
+  echo "$out"
+}
+
+resolve() {                         # <sel> (node | vid:pid | empty=only one) -> node
+  local sel="${1:-}" all; all=$(cam_nodes)
+  if [ -z "$sel" ]; then
+    [ "$(echo "$all" | grep -c .)" = 1 ] && { echo "$all"; return; }; return 1
+  fi
+  echo "$all" | grep -qx "$sel" && { echo "$sel"; return; }
+  local dev
+  for dev in $all; do
+    [ "$(vidpid_of "/sys/bus/usb/devices/$dev")" = "$sel" ] && { echo "$dev"; return; }
+  done
+  return 1
+}
+
+mark() {                            # $1=add|del  $2=vid:pid  — maintain STATE
+  mkdir -p "$(dirname "$STATE")"; touch "$STATE"
+  grep -vxF "$2" "$STATE" > "$STATE.tmp" 2>/dev/null || true
+  [ "$1" = add ] && echo "$2" >> "$STATE.tmp"
+  mv "$STATE.tmp" "$STATE"
+}
+
+list() {
+  local any=0 dev prod auth vnodes hold st
+  for dev in $(cam_nodes); do
+    any=1
+    prod=$(cat "/sys/bus/usb/devices/$dev/product" 2>/dev/null || echo '?')
+    auth=$(cat "/sys/bus/usb/devices/$dev/authorized" 2>/dev/null)
+    [ "$auth" = 1 ] && st="ON " || st="OFF"
+    vnodes=$(video_nodes_of "$dev" | tr '\n' ' '); [ -z "$vnodes" ] && vnodes="(driver not loaded / off)"
+    hold=$(holders_of "$dev")
+    printf '● [%s]  %-5s  %s  %s\n' "$st" "$dev" "$(vidpid_of "/sys/bus/usb/devices/$dev")" "$prod"
+    printf '        nodes: %s\n' "$vnodes"
+    [ -n "$hold" ] && printf '        held by:%s\n' "$hold"
+  done
+  if [ "$any" = 0 ]; then echo "No video-capture devices found."; fi
+}
+
+turn_off() {
+  local dev; dev=$(resolve "${1:-}") || { echo "Could not resolve the camera (try: camctl list)"; exit 1; }
+  local vn
+  for vn in $(video_nodes_of "$dev"); do sudo fuser -k "$vn" 2>/dev/null; done
+  echo 0 | sudo tee "/sys/bus/usb/devices/$dev/authorized" >/dev/null
+  mark add "$(vidpid_of "/sys/bus/usb/devices/$dev")"
+  echo "Camera $dev DISABLED (authorized=0)."
+}
+
+turn_on() {
+  local dev; dev=$(resolve "${1:-}") || { echo "Could not resolve the camera (try: camctl list)"; exit 1; }
+  lsmod | grep -q '^uvcvideo' || sudo modprobe uvcvideo
+  echo 1 | sudo tee "/sys/bus/usb/devices/$dev/authorized" >/dev/null
+  mark del "$(vidpid_of "/sys/bus/usb/devices/$dev")"
+  echo "Camera $dev ENABLED (authorized=1)."
+}
+
+case "${1:-list}" in
+  list|ls|"") list ;;
+  off)        turn_off "${2:-}" ;;
+  on)         turn_on  "${2:-}" ;;
+  toggle)
+    dev=$(resolve "${2:-}") || { echo "Could not resolve the camera."; exit 1; }
+    [ "$(cat "/sys/bus/usb/devices/$dev/authorized")" = 1 ] && turn_off "$dev" || turn_on "$dev" ;;
+  -h|--help)  sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//' ;;
+  *) echo "Unknown command: $1 (use: list | on | off | toggle)"; exit 1 ;;
+esac

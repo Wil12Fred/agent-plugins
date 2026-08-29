@@ -1,6 +1,6 @@
 ---
 name: linux-workstation-ops
-description: Use for local Arch Linux / KDE workstation operational issues on this machine — Wi-Fi/network recovery after a system update (MediaTek mt7925), a device whose DMA has wedged (no data, I/O errors, while the driver looks healthy), an out-of-tree kernel module missing after a kernel upgrade, pasting into a terminal program, and the known gap where agent background-task notifications do not reach the Slack session system. Local-environment ops, not product/application code. Do not use for sound-server profiles, levels or Bluetooth audio (that is `linux-pipewire-audio-ops`), nor for a display cable moved between GPUs (that is `linux-gpu-output-switch`).
+description: Use for local Arch Linux / KDE workstation operational issues on this machine — Wi-Fi/network recovery after a system update (MediaTek mt7925), a device whose DMA has wedged (no data, I/O errors, while the driver looks healthy), an out-of-tree kernel module missing after a kernel upgrade, enabling/disabling a USB webcam per-device (a camera that will not start, or one held open by Chrome, and the `camctl` tool), pasting into a terminal program, and the known gap where agent background-task notifications do not reach the Slack session system. Local-environment ops, not product/application code. Do not use for sound-server profiles, levels or Bluetooth audio (that is `linux-pipewire-audio-ops`), nor for a display cable moved between GPUs (that is `linux-gpu-output-switch`).
 ---
 
 # Linux Workstation Ops
@@ -235,6 +235,88 @@ test costs seconds — install, restart the program, paste.
   no GPU at all. Use the vendor's own tool for those, and remember that any
   fdinfo-based reader also silently skips processes whose `/proc` entry it cannot
   read.
+
+## 7. Enabling and disabling a webcam (per-device)
+
+A USB webcam is a UVC device driven by the in-tree `uvcvideo` module — generic,
+loaded automatically, the same driver for every UVC camera (a vendor driver is
+almost never needed; anything from ~2008 on is UVC, and pre-UVC cameras fall to
+the `gspca_*` family instead). Two facts shape every "the camera won't start"
+report:
+
+- **A camera is exclusive-access.** Only one process may stream from `/dev/video0`
+  at a time. A second app does not queue — it fails to open.
+- **Chrome keeps the device open after the tab is gone.** Its capture process
+  (`chrome --type=utility --utility-sub-type=video_capture.mojom.VideoCaptureService`)
+  lingers, and sometimes never exits, holding `/dev/video0`. This is the number-one
+  cause of "I plugged the camera in and nothing else can use it", and it is also
+  what makes `modprobe -r uvcvideo` fail with `Module is in use` — the driver will
+  not unload while any device it owns is open. Find the holder, then free it:
+  ```bash
+  fuser -v /dev/video0        # who has it open
+  kill <pid>                  # or close Chrome entirely
+  ```
+
+**Three levels of "disable", from blunt to surgical.** They differ in blast
+radius, and only the last one is per-device:
+
+| Action | Turns off | Scope |
+|---|---|---|
+| `sudo modprobe -r uvcvideo` | the **driver** | **every** UVC camera at once |
+| `unbind` in `/sys/bus/usb/drivers/uvcvideo/` | the driver **for this camera** | this camera's video interfaces only |
+| `authorized=0` on the USB **device** node | the **USB device itself** | this camera only (video *and* audio); closest to unplugging |
+
+```bash
+# surgical: deauthorize just this camera (leaves uvcvideo and other cameras alone)
+echo 0 | sudo tee /sys/bus/usb/devices/3-7/authorized   # off
+echo 1 | sudo tee /sys/bus/usb/devices/3-7/authorized   # on
+```
+
+**`authorized` travels with the device, not the port.** Setting it to 0
+deauthorizes *that connected device instance*. Unplug it and plug something else
+into the same physical port and the new device re-enumerates with the default
+(`authorized=1`) — the "off" does not stick to the socket, so it never blocks an
+unrelated device. And `modprobe -r uvcvideo` only affects cameras: a flash drive
+or keyboard in that port uses a different driver and is unaffected.
+
+**The node path is not stable — locate by ID.** The USB node moved from `3-9` to
+`3-7` across a single unplug/replug in testing. A tool that hard-codes the path
+will act on the wrong device; resolve the camera by its `idVendor:idProduct`
+(here `093a:2700`) and read the node fresh.
+
+**A slow/laggy feed is usually the hardware, not the system.** A cheap UVC camera
+may offer only uncompressed `YUYV` at `640x480` (no MJPEG): that is ~147 Mbps of
+raw video over a shared 480 Mbps USB bus plus CPU to decode it. `v4l2-ctl -d
+/dev/video0 --list-formats-ext` shows the ceiling; there is nothing to tune —
+either force the app to that resolution or use a camera with MJPEG/H.264.
+
+### `camctl` — list and toggle capture devices by device
+
+[`scripts/camctl`](scripts/camctl) lists every video-capture device — **even when
+the driver is unloaded**, since it enumerates by USB Video class (`0e`), not by
+`/dev/video*` — and toggles one via `authorized`, freeing any holder first. It
+resolves the camera by USB node *or* by `vendor:product`, so a changed node path
+does not matter.
+
+```bash
+camctl                 # list: ON/OFF, node, id, name, and who holds it
+camctl off             # deauthorize (frees the holder, e.g. Chrome, then authorized=0)
+camctl on              # authorize, and modprobe uvcvideo if it is unloaded
+camctl toggle
+camctl off 093a:2700   # target by id (or by node: camctl off 3-7)
+```
+
+With one camera present, `on`/`off`/`toggle` need no argument. Full reference,
+the passwordless-`sudo` rule, and how it handles an already-off camera:
+[`scripts/camctl.md`](scripts/camctl.md).
+
+**One subtlety worth stating here**, because it is a property of the mechanism,
+not of the tool: deauthorizing a device tears its interfaces down, so a camera
+that is *already* OFF exposes no `0e` interface to find it by. A naive
+interface-only lister will not show an off camera and cannot turn it back on;
+`camctl` covers it with a small state file plus a product-name fallback (the
+`vendor:product` and `product` descriptors stay readable while a device is
+deauthorized — only the interfaces disappear).
 
 ## Safety rules
 
