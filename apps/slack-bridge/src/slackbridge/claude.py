@@ -32,7 +32,12 @@ from typing import Any
 CLAUDE_BIN = os.environ.get("CLAUDE_BIN", "claude")
 """The Claude Code entry point. Overridable: not everyone has it on `PATH`."""
 
-CLAUDE_HOME = Path(os.environ.get("CLAUDE_HOME", "")) or Path.home() / ".claude"
+# An unset or empty CLAUDE_HOME means ~/.claude. ``Path("")`` is ``Path(".")``, which is
+# truthy, so the fallback must not rest on ``or``: that wrote the VS Code inbox into the
+# working directory.
+CLAUDE_HOME = (
+    Path(os.environ["CLAUDE_HOME"]) if os.environ.get("CLAUDE_HOME") else Path.home() / ".claude"
+)
 PROJECTS = CLAUDE_HOME / "projects"
 VSCODE_INBOX = CLAUDE_HOME / "vscode-inbox.jsonl"
 
