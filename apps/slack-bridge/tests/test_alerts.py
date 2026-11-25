@@ -713,24 +713,27 @@ def test_backfill_routes_untracked_alerts_and_questions_oldest_first(
     ]
 
 
-def test_backfill_skips_what_was_already_dispatched(store: alerts.AlertStore) -> None:
-    """Rule: a restart never re-sends — the persisted store is the record of what went out."""
-    store.track(ts("-60"), "ABC-123")
-    client = _FakeHistory({ALERTS: [{"ts": ts("-60"), "user": CS_USER, "text": ALERT_TEXT}]})
-    assert _backfill(client, store) == []
-
-
-def test_backfill_skips_an_answered_question_but_not_an_answered_alert(
+def test_backfill_resends_a_dispatched_message_that_is_still_unanswered(
     store: alerts.AlertStore,
 ) -> None:
-    """Rule: a question somebody already answered is not pending; a critical alert still is."""
+    """Rule: pending means "nobody answered", not "never sent" — a worker that died or was
+    stopped left the question open, and the restart must hand it over again."""
+    store.track(ts("-60"), None)
+    client = _FakeHistory({QA: [{"ts": ts("-60"), "user": CS_USER, "text": "duda"}]})
+    assert [e.text for e in _backfill(client, store)] == ["duda"]
+
+
+def test_backfill_skips_anything_with_a_reply_in_either_kind_of_channel(
+    store: alerts.AlertStore,
+) -> None:
+    """Rule: a thread with any reply was handled — re-sending it would answer twice."""
     client = _FakeHistory(
         {
             QA: [{"ts": ts("-50"), "user": CS_USER, "text": "duda", "reply_count": 2}],
             ALERTS: [{"ts": ts("-40"), "user": CS_USER, "text": ALERT_TEXT, "reply_count": 1}],
         }
     )
-    assert [e.channel for e in _backfill(client, store)] == [ALERTS]
+    assert _backfill(client, store) == []
 
 
 def test_backfill_ignores_thread_replies_bot_posts_and_the_operator(

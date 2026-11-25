@@ -399,11 +399,12 @@ def backfill(
 ) -> list[AlertEvent]:
     """Dispatch the alerts that arrived while the bridge was down; returns what it routed.
 
-    Reads the last ``alerts_backfill_hours`` of every watched channel, oldest first. A
-    message is routed only if it is top-level, classifies as an alert, and was never
-    tracked — the persisted store is the record of what already went out, so a restart
-    does not re-send. In a ``*`` channel a question that already has replies is skipped:
-    somebody answered it while we were away. One unreadable channel is logged, not fatal.
+    Reads the last ``alerts_backfill_hours`` of every watched channel, oldest first, and
+    routes every top-level alert whose thread is still **empty** — whether or not it was
+    dispatched before. "Pending" means nobody answered, not "never sent": a dispatch whose
+    worker died or was stopped left the question unanswered, and only re-sending it
+    recovers that. A thread with any reply (ours included) is answered and skipped, so an
+    alert that was handled is not re-sent. One unreadable channel is logged, not fatal.
     """
     if not config.alerts_channel_ids or config.alerts_backfill_hours <= 0:
         return []
@@ -416,12 +417,11 @@ def backfill(
         except Exception as exc:  # noqa: BLE001 - one channel must not stop the others
             logger.error("alert backfill: cannot read %s: %s", channel, exc)
             continue
-        question_channel = trigger_for(config, channel) == ANY
         for message in sorted(messages_, key=lambda m: float(m.get("ts") or 0)):
             ts = message.get("ts", "")
-            if not ts or message.get("thread_ts", ts) != ts or store.get(ts) is not None:
+            if not ts or message.get("thread_ts", ts) != ts:
                 continue
-            if question_channel and int(message.get("reply_count") or 0) > 0:
+            if int(message.get("reply_count") or 0) > 0:
                 continue
             event = classify({**message, "channel": channel}, config, store)
             if event is None or event.kind != "ALERT":
