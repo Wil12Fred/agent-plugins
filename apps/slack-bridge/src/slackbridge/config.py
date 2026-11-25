@@ -31,12 +31,20 @@ Alert routing (:mod:`slackbridge.alerts`), off unless ``SLACK_ALERTS_CHANNEL_ID`
 ``SLACK_ALERTS_CHANNEL_ID``     channel(s) watched for alerts, comma/space separated; never
                                 written to. May include the control channel: there an alert
                                 takes the alert path and everything else behaves as before.
-``SLACK_ALERTS_TRIGGER``        phrase that makes a top-level message an alert (required).
+``SLACK_ALERTS_TRIGGER``        phrase that makes a top-level message an alert (required
+                                unless every channel has its own, below).
+``SLACK_ALERTS_CHANNEL_TRIGGERS`` per-channel override, ``C1=*;C2=SOME PHRASE``: ``;``-separated
+                                because a phrase may hold commas. ``*`` means every top-level
+                                human message is an alert (a Q&A channel), except those from
+                                ``SLACK_ALERTS_IGNORE_USER_IDS``; its text reaches the session
+                                as data. Every channel named here must also be watched.
 ``SLACK_ALERTS_SESSION_NAME``   the Claude session the alerts go to (required).
 ``SLACK_ALERTS_SESSION_CWD``    where that session starts; defaults to ``NEW_SESSION_CWD``.
 ``SLACK_ALERTS_IGNORE_USER_IDS`` thread replies from these users are not routed;
                                 defaults to ``SLACK_PRIVATE_USER_ID``.
 ``SLACK_ALERTS_INSTRUCTIONS``   what the session is told to do with a new alert.
+``SLACK_ALERTS_BACKFILL_HOURS`` on start, how far back to look for alerts the bridge never
+                                dispatched (it was down when they arrived); default 24, 0 = off.
 ``SLACK_ALERTS_STATE``          tracked alerts file; ``SLACK_ALERTS_SEED_STATE`` a read-only seed.
 ``SLACK_WORKSPACE_URL``         ``https://<workspace>.slack.com``, for message permalinks.
 """
@@ -44,7 +52,7 @@ Alert routing (:mod:`slackbridge.alerts`), off unless ``SLACK_ALERTS_CHANNEL_ID`
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from opscore.env import load_env_file
@@ -96,10 +104,12 @@ class SlackConfig:
     watchdog_seconds: int
     alerts_channel_ids: frozenset[str] = frozenset()
     alerts_trigger: str = ""
+    alerts_channel_triggers: dict[str, str] = field(default_factory=dict)
     alerts_session_name: str = ""
     alerts_session_cwd: Path | None = None
     alerts_ignore_user_ids: frozenset[str] = frozenset()
     alerts_instructions: str = ""
+    alerts_backfill_hours: float = 24.0
     alerts_state_path: Path = Path.home() / ".local" / "state" / "slackbridge" / "alerts.json"
     alerts_seed_state_path: Path | None = None
     workspace_url: str = ""
@@ -137,6 +147,37 @@ class SlackConfig:
         return f"<@{self.private_user_id}> " if self.private_user_id else ""
 
 
+def _channel_triggers(raw: str) -> dict[str, str]:
+    """``C1=*;C2=PHRASE`` as ``{channel: trigger}``; a malformed entry is refused, not skipped."""
+    out: dict[str, str] = {}
+    for part in raw.split(";"):
+        part = part.strip()
+        if not part:
+            continue
+        channel, sep, trigger = part.partition("=")
+        channel, trigger = channel.strip(), trigger.strip()
+        if not sep or not channel or not trigger:
+            raise ConfigError(
+                f"SLACK_ALERTS_CHANNEL_TRIGGERS entry {part!r} is not CHANNEL=TRIGGER",
+                detail="use ';' between entries, e.g. C123=*;C456=TICKET CRITICO",
+            )
+        out[channel] = trigger
+    return out
+
+
+def _hours(name: str, default: float) -> float:
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        raise ConfigError(f"{name} must be a number of hours, got {raw!r}") from None
+    if value < 0:
+        raise ConfigError(f"{name} must be >= 0 (0 turns it off), got {raw!r}")
+    return value
+
+
 def _path(name: str) -> Path | None:
     raw = os.environ.get(name, "").strip()
     return Path(raw).expanduser() if raw else None
@@ -151,9 +192,23 @@ def _alerts_settings(private_user_id: str) -> dict[str, object]:
     channels = _split_ids(os.environ.get("SLACK_ALERTS_CHANNEL_ID", ""))
     if not channels:
         return {}
+    per_channel = _channel_triggers(os.environ.get("SLACK_ALERTS_CHANNEL_TRIGGERS", ""))
+    unknown = sorted(set(per_channel) - channels)
+    if unknown:
+        raise ConfigError(
+            f"SLACK_ALERTS_CHANNEL_TRIGGERS names {', '.join(unknown)}, which "
+            "SLACK_ALERTS_CHANNEL_ID does not watch",
+            detail="a trigger for an unwatched channel would never fire; add the channel to "
+            "SLACK_ALERTS_CHANNEL_ID or drop it from SLACK_ALERTS_CHANNEL_TRIGGERS",
+        )
     trigger = os.environ.get("SLACK_ALERTS_TRIGGER", "").strip()
     name = os.environ.get("SLACK_ALERTS_SESSION_NAME", "").strip()
-    for var, value in (("SLACK_ALERTS_TRIGGER", trigger), ("SLACK_ALERTS_SESSION_NAME", name)):
+    # The global phrase is only optional when no watched channel falls back to it.
+    needs_global = bool(channels - set(per_channel))
+    required = [("SLACK_ALERTS_SESSION_NAME", name)]
+    if needs_global:
+        required.insert(0, ("SLACK_ALERTS_TRIGGER", trigger))
+    for var, value in required:
         if not value:
             raise ConfigError(
                 f"SLACK_ALERTS_CHANNEL_ID is set but {var} is not: set {var} in .env",
@@ -163,12 +218,14 @@ def _alerts_settings(private_user_id: str) -> dict[str, object]:
     settings: dict[str, object] = {
         "alerts_channel_ids": channels,
         "alerts_trigger": trigger,
+        "alerts_channel_triggers": per_channel,
         "alerts_session_name": name,
         "alerts_session_cwd": _path("SLACK_ALERTS_SESSION_CWD"),
         "alerts_ignore_user_ids": _split_ids(
             os.environ.get("SLACK_ALERTS_IGNORE_USER_IDS") or private_user_id
         ),
         "alerts_instructions": os.environ.get("SLACK_ALERTS_INSTRUCTIONS", "").strip(),
+        "alerts_backfill_hours": _hours("SLACK_ALERTS_BACKFILL_HOURS", 24.0),
         "alerts_seed_state_path": _path("SLACK_ALERTS_SEED_STATE"),
     }
     state = _path("SLACK_ALERTS_STATE")

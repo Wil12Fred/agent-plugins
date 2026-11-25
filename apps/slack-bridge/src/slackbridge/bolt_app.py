@@ -26,7 +26,7 @@ import logging
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
 
-from slackbridge import watchdog
+from slackbridge import alerts, watchdog
 from slackbridge.config import SlackConfig, load
 from slackbridge.listeners import register
 
@@ -52,6 +52,8 @@ def serve(config: SlackConfig | None = None, *, log_level: int = logging.INFO) -
     logging.basicConfig(level=log_level)
     app, resolved = build_app(config)
     watchdog.start(app.client, resolved.channel_id, interval=resolved.watchdog_seconds)
+    # Alerts that arrived while the listener was down are not redelivered by Slack.
+    alerts.start_backfill(app.client, resolved, logging.getLogger("slackbridge.alerts"))
     # slack_bolt ships py.typed but leaves SocketModeHandler.start()
     # unannotated, so strict mode rejects the one call that runs the listener.
     SocketModeHandler(app, resolved.require_app_token()).start()  # type: ignore[no-untyped-call]
