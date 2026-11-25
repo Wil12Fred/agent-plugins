@@ -74,14 +74,14 @@ kbuildsycoca6 --noincremental
 Restart Slack cleanly:
 
 ```bash
-pkill -f '^/usr/bin/slack'
+pkill -f '/usr/lib/slack/slac[k]'   # the real binary; /usr/bin/slack is a wrapper
 gtk-launch slack
 ```
 
 Verify active flags:
 
 ```bash
-pgrep -af '/usr/bin/slack|slack$'
+pgrep -af '/usr/lib/slack/slac[k]' | grep -v -- '--type='
 ```
 
 Expected result:
