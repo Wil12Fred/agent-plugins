@@ -5,6 +5,15 @@
 * **top-level message** -> open a NEW live Claude session with that message as the prompt
   and answer in its thread, so the conversation can continue from there.
 
+Before any guard, a message from an **alerts channel** (``SLACK_ALERTS_CHANNEL_ID``) is
+handed to :mod:`slackbridge.alerts`. Only a trigger-phrase alert or a reply in a tracked
+alert's thread is routed (to one named session), and the bridge never writes there. What is
+not an alert is dropped silently — unless that channel is also the control channel, where
+it falls through to the guards below unchanged. An alert is never *also* treated as a
+control-channel message, so it cannot open a second, unnamed session. Edits and
+redeliveries are skipped; on that path only the bridge's own bot user is dropped, not every
+``bot_id`` (see :func:`slackbridge.alerts.is_own_post`).
+
 Guards, in the order they run — each one exists because of a real failure:
 
 1. wrong channel -> ignore (the app receives every message in the workspace);
@@ -28,7 +37,7 @@ from typing import Any
 from slack_bolt import App
 from slack_sdk import WebClient
 
-from slackbridge import sessions
+from slackbridge import alerts, sessions
 from slackbridge.access import is_allowed, is_bridge_post
 from slackbridge.api import SlackAPI
 from slackbridge.blocks import NOTIFY_CAP, result_blocks
@@ -112,6 +121,12 @@ def _dispatch_thread(
 
 def callback(event: dict[str, Any], client: WebClient, logger: Logger, config: SlackConfig) -> None:
     """Handle one ``message`` event. See the module docstring for the guard order."""
+    if event.get("channel") in config.alerts_channel_ids:
+        routed = alerts.handle(event, config, logger, seen=_seen)
+        # An alerts channel that is not also the control channel is chatter: stop here.
+        # In the control channel, a message that was not an alert behaves as it always did.
+        if routed or event.get("channel") != config.channel_id:
+            return
     if config.channel_id and event.get("channel") != config.channel_id:
         return
     if event.get("subtype"):

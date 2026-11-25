@@ -68,7 +68,10 @@ def test_a_top_level_message_routes_to_the_right_engine(
     monkeypatch.setattr(messages, "_seen", lambda *_a: False)
 
     config = SimpleNamespace(
-        channel_id="C1", new_session_cwd=Path("/tmp"), new_session_terminal="auto"
+        channel_id="C1",
+        new_session_cwd=Path("/tmp"),
+        new_session_terminal="auto",
+        alerts_channel_ids=frozenset(),
     )
     logger = logging.getLogger("test")
 

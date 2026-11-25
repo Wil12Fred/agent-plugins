@@ -25,6 +25,20 @@ Other knobs:
 ``SLACK_PRIVATE_USER_ID`` fallback single-user allowlist + the ``<@id>`` mention prefix.
 ``SLACK_BOT_USER_ID``    the app's own user id, never allowlisted.
 ``SLACK_PRIVATE_EMAIL``  DM recipient when no channel id is configured.
+
+Alert routing (:mod:`slackbridge.alerts`), off unless ``SLACK_ALERTS_CHANNEL_ID`` is set:
+
+``SLACK_ALERTS_CHANNEL_ID``     channel(s) watched for alerts, comma/space separated; never
+                                written to. May include the control channel: there an alert
+                                takes the alert path and everything else behaves as before.
+``SLACK_ALERTS_TRIGGER``        phrase that makes a top-level message an alert (required).
+``SLACK_ALERTS_SESSION_NAME``   the Claude session the alerts go to (required).
+``SLACK_ALERTS_SESSION_CWD``    where that session starts; defaults to ``NEW_SESSION_CWD``.
+``SLACK_ALERTS_IGNORE_USER_IDS`` thread replies from these users are not routed;
+                                defaults to ``SLACK_PRIVATE_USER_ID``.
+``SLACK_ALERTS_INSTRUCTIONS``   what the session is told to do with a new alert.
+``SLACK_ALERTS_STATE``          tracked alerts file; ``SLACK_ALERTS_SEED_STATE`` a read-only seed.
+``SLACK_WORKSPACE_URL``         ``https://<workspace>.slack.com``, for message permalinks.
 """
 
 from __future__ import annotations
@@ -80,6 +94,15 @@ class SlackConfig:
     new_session_cwd: Path
     new_session_terminal: str
     watchdog_seconds: int
+    alerts_channel_ids: frozenset[str] = frozenset()
+    alerts_trigger: str = ""
+    alerts_session_name: str = ""
+    alerts_session_cwd: Path | None = None
+    alerts_ignore_user_ids: frozenset[str] = frozenset()
+    alerts_instructions: str = ""
+    alerts_state_path: Path = Path.home() / ".local" / "state" / "slackbridge" / "alerts.json"
+    alerts_seed_state_path: Path | None = None
+    workspace_url: str = ""
 
     def require_bot_token(self) -> str:
         """Return the bot token or explain, without leaking anything, that it is missing."""
@@ -114,10 +137,51 @@ class SlackConfig:
         return f"<@{self.private_user_id}> " if self.private_user_id else ""
 
 
+def _path(name: str) -> Path | None:
+    raw = os.environ.get(name, "").strip()
+    return Path(raw).expanduser() if raw else None
+
+
+def _alerts_settings(private_user_id: str) -> dict[str, object]:
+    """The alert-routing fields, refusing a half-configured feature.
+
+    A channel without a trigger or a target session would not fail: it would silently
+    route nothing, which reads exactly like "no alerts arrived".
+    """
+    channels = _split_ids(os.environ.get("SLACK_ALERTS_CHANNEL_ID", ""))
+    if not channels:
+        return {}
+    trigger = os.environ.get("SLACK_ALERTS_TRIGGER", "").strip()
+    name = os.environ.get("SLACK_ALERTS_SESSION_NAME", "").strip()
+    for var, value in (("SLACK_ALERTS_TRIGGER", trigger), ("SLACK_ALERTS_SESSION_NAME", name)):
+        if not value:
+            raise ConfigError(
+                f"SLACK_ALERTS_CHANNEL_ID is set but {var} is not: set {var} in .env",
+                detail="alert routing needs both a trigger phrase and a target session name; "
+                "unset SLACK_ALERTS_CHANNEL_ID to turn the feature off",
+            )
+    settings: dict[str, object] = {
+        "alerts_channel_ids": channels,
+        "alerts_trigger": trigger,
+        "alerts_session_name": name,
+        "alerts_session_cwd": _path("SLACK_ALERTS_SESSION_CWD"),
+        "alerts_ignore_user_ids": _split_ids(
+            os.environ.get("SLACK_ALERTS_IGNORE_USER_IDS") or private_user_id
+        ),
+        "alerts_instructions": os.environ.get("SLACK_ALERTS_INSTRUCTIONS", "").strip(),
+        "alerts_seed_state_path": _path("SLACK_ALERTS_SEED_STATE"),
+    }
+    state = _path("SLACK_ALERTS_STATE")
+    if state:
+        settings["alerts_state_path"] = state
+    return settings
+
+
 def load() -> SlackConfig:
     """Resolve the bridge configuration from the environment and the repo ``.env``."""
     load_env_file()
     cwd = os.environ.get("NEW_SESSION_CWD") or os.environ.get("CODEX_SESSIONS_NEW_SESSION_CWD", "")
+    private_user_id = os.environ.get("SLACK_PRIVATE_USER_ID", "").strip()
     return SlackConfig(
         bot_token=resolve(env_var="SLACK_BOT_TOKEN", required=False),
         app_token=resolve(env_var="SLACK_APP_TOKEN", required=False),
@@ -134,4 +198,6 @@ def load() -> SlackConfig:
         new_session_cwd=Path(cwd).expanduser() if cwd else Path.cwd(),
         new_session_terminal=os.environ.get("NEW_SESSION_TERMINAL", "auto"),
         watchdog_seconds=int(os.environ.get("SLACK_WATCHDOG_SECONDS", "600")),
+        workspace_url=os.environ.get("SLACK_WORKSPACE_URL", "").strip(),
+        **_alerts_settings(private_user_id),  # type: ignore[arg-type]
     )
