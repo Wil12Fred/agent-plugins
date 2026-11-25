@@ -44,7 +44,8 @@ Alert routing (:mod:`slackbridge.alerts`), off unless ``SLACK_ALERTS_CHANNEL_ID`
                                 defaults to ``SLACK_PRIVATE_USER_ID``.
 ``SLACK_ALERTS_INSTRUCTIONS``   what the session is told to do with a new alert.
 ``SLACK_ALERTS_BACKFILL_HOURS`` on start, how far back to look for alerts whose thread is
-                                still empty (re-sent even if dispatched before); default 24, 0 = off.
+                                still empty, re-sent even if dispatched before; default 24,
+                                0 = off.
 ``SLACK_ALERTS_STATE``          tracked alerts file; ``SLACK_ALERTS_SEED_STATE`` a read-only seed.
 ``SLACK_WORKSPACE_URL``         ``https://<workspace>.slack.com``, for message permalinks.
 """
