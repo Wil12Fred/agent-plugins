@@ -1,6 +1,6 @@
 ---
 name: linux-workstation-ops
-description: Use for local Arch Linux / KDE workstation operational issues on this machine — Wi-Fi/network recovery after a system update (MediaTek mt7925), a device whose DMA has wedged (no data, I/O errors, while the driver looks healthy), an out-of-tree kernel module missing after a kernel upgrade, enabling/disabling a USB webcam per-device (a camera that will not start, or one held open by Chrome, and the `camctl` tool), pasting into a terminal program, and the known gap where agent background-task notifications do not reach the Slack session system. Local-environment ops, not product/application code. Do not use for sound-server profiles, levels or Bluetooth audio (that is `linux-pipewire-audio-ops`), nor for a display cable moved between GPUs (that is `linux-gpu-output-switch`).
+description: Use for local Arch Linux / KDE workstation operational issues on this machine — Wi-Fi/network recovery after a system update (MediaTek mt7925), a device whose DMA has wedged (no data, I/O errors, while the driver looks healthy), an out-of-tree kernel module missing after a kernel upgrade, enabling/disabling a USB webcam per-device (a camera that will not start, or one held open by Chrome, and the `camctl` tool), pasting into a terminal program, where a credential lives (project `.env` vs the KDE Wallet via `secret-tool`, and how to store, list and use a personal token such as a GitHub PAT), and the known gap where agent background-task notifications do not reach the Slack session system. Local-environment ops, not product/application code. Do not use for sound-server profiles, levels or Bluetooth audio (that is `linux-pipewire-audio-ops`), nor for a display cable moved between GPUs (that is `linux-gpu-output-switch`).
 ---
 
 # Linux Workstation Ops
@@ -317,6 +317,69 @@ interface-only lister will not show an off camera and cannot turn it back on;
 `camctl` covers it with a small state file plus a product-name fallback (the
 `vendor:product` and `product` descriptors stay readable while a device is
 deauthorized — only the interfaces disappear).
+
+## 8. Where a credential lives: the project's `.env`, then the keyring
+
+Two places, chosen by **whose** credential it is, not by how secret it is:
+
+| The credential belongs to… | It lives in | Examples |
+|---|---|---|
+| an organisation or one project | that project's `.env` (gitignored) | a database password, an issue-tracker API token, a cloud key |
+| **the user**, whatever they are working on | the **KDE Wallet**, through the Secret Service (`secret-tool`) | the user's own chat-app OAuth token, their GitHub personal access token |
+
+So the lookup order is: **the project's `.env` first; if it is not there, the keyring.** A token that is
+the *user's* — it acts as them, in every project — belongs in the keyring precisely so that no single
+project's `.env` has to carry it, and so that it survives that project being deleted or re-cloned.
+
+**Look up by attributes, never by browsing.** `secret-tool` matches exact attribute pairs; there is no
+wildcard search:
+
+```bash
+secret-tool lookup service github account <github-login>      # a GitHub PAT
+secret-tool lookup service slack-user-oauth account <workspace> # a Slack user token
+```
+
+**Listing what is there** — labels and attributes only, never values — needs the Secret Service API,
+because `secret-tool search` also requires exact attributes:
+
+```bash
+uv run --no-project --with secretstorage python - <<'EOF'
+import secretstorage
+conn = secretstorage.dbus_init()
+for col in secretstorage.get_all_collections(conn):
+    for it in ([] if col.is_locked() else col.get_all_items()):
+        a = {k: v for k, v in it.get_attributes().items() if k != "xdg:schema"}
+        print(col.get_label(), "|", it.get_label(), "|", a)
+EOF
+```
+
+A search for a token that comes back empty from **one** `secret-tool search` is not proof the token is
+absent: the attributes were probably just different. List first, then conclude.
+
+**Storing one** — the user runs this in their own terminal, so the value never passes through an agent's
+transcript; `secret-tool` prompts for it and does not echo:
+
+```bash
+secret-tool store --label="GitHub Personal Access Token" service github account <github-login>
+```
+
+**Using one** — read it into a variable and pass it on; never echo it, never write it to a file:
+
+```bash
+T=$(secret-tool lookup service github account <github-login>)
+curl -s -H "Authorization: Bearer $T" https://api.github.com/user   # 200 + login = valid
+```
+
+`curl -sI` on the same URL shows `x-oauth-scopes`: a classic token with `admin:org`, `delete_repo` and no
+`github-authentication-token-expiration` header is valid but over-privileged — say so, and suggest a
+fine-grained token with only the permissions the task needs.
+
+**Agent memory is not a credential store, nor a place for this procedure.** It is unversioned and
+per-directory; this skill is the versioned record. A memory may at most point here.
+
+A second machine reached over SSH does not inherit any of this: it has its own keyring and usually no
+GitHub key. To publish a repository that lives there, clone it to this machine over SSH, push from here,
+then set `origin` on the remote machine.
 
 ## Safety rules
 
