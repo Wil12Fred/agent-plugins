@@ -1,6 +1,6 @@
 # agent-toolkit
 
-Six skills and two subagents about **making an agent's claims checkable**. No
+Seven skills and two subagents about **making an agent's claims checkable**. No
 project knowledge, no company knowledge, no host names, no ticket keys.
 
 | | |
@@ -10,13 +10,14 @@ project knowledge, no company knowledge, no host names, no ticket keys.
 | `vetting-third-party-tooling` | never install a third-party MCP — clone, read, score 1-10, adapt or escalate |
 | `verified-state-contract` | every claim about a live system carries the commit it was measured against, re-checked at the moment of use |
 | `measuring-technical-debt` | the ratchet, which quality characteristic each signal erodes, and how a signal ends up unable to observe what it names |
+| `integration-patterns` | ten symptoms of parallel branches and gates that push toward the wrong fix, each mapped to the established pattern, what not to do, and its source |
 | `closing-a-review-loop` | why only a Stop hook cannot be forgotten, and six ways a convergence gate fails closed while its header says it fails open |
 | `@agent-repo-auditor` | audits a repository against the rules it wrote for itself. `permissionMode: plan` — reports, never edits |
 | `@agent-research-analyst` | evaluates external tooling by cloning and reading it. Never installs, never executes a candidate |
 
 ## Install
 
-**`SKILL.md` is a cross-vendor standard**, so the six skills run unmodified on
+**`SKILL.md` is a cross-vendor standard**, so the seven skills run unmodified on
 Claude Code, Codex CLI, Gemini CLI and Cursor. The *packaging* is what differs.
 
 **Claude Code** — the plugin, which carries the skills *and* the two subagents:

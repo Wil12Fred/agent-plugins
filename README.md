@@ -10,7 +10,7 @@ tools/vscode-terminal-bridge/   a VS Code extension: type into one *specific* te
 
 plugins/agent-toolkit/     a Claude Code plugin
 ├── src/agentctl/          the CLI and the MCP server
-├── skills/                6 skills — SKILL.md, so Claude Code, Codex, Gemini and Cursor all read them
+├── skills/                7 skills — SKILL.md, so Claude Code, Codex, Gemini and Cursor all read them
 ├── agents/                2 subagents — Claude Code only
 └── tests/                 199 tests
 

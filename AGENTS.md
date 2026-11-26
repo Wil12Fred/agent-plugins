@@ -57,7 +57,7 @@ apps/            services and CLIs, sharing `opscore` through a uv workspace
 └── slack-bridge/  drive agent sessions from a Slack thread
 
 plugins/         Claude Code plugins, installed by copying their directory
-├── agent-toolkit/  5 skills, 2 subagents, the `agentctl` CLI + MCP server
+├── agent-toolkit/  7 skills, 2 subagents, the `agentctl` CLI + MCP server
 └── workstation/    4 skills about one Arch/KDE machine
 
 tools/           things that are not Python

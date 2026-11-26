@@ -1,7 +1,7 @@
 {
   "name": "agent-toolkit",
   "displayName": "Agent toolkit",
-  "description": "Making an agent's claims checkable, and the utilities that keep coming up: fourteen ways a check proves nothing, authoring skills and subagents, vetting third-party tooling, a verified-state contract, the debt ratchet \u2014 plus the `agentctl` CLI and its read-only MCP server. No project knowledge.",
+  "description": "Making an agent's claims checkable, and the utilities that keep coming up: fourteen ways a check proves nothing, authoring skills and subagents, vetting third-party tooling, a verified-state contract, the debt ratchet, integration patterns for parallel branches \u2014 plus the `agentctl` CLI and its read-only MCP server. No project knowledge.",
   "version": "0.1.0",
   "author": {
     "name": "Wilber Cutire"
