@@ -15,6 +15,8 @@ uvx --from apps/slack-bridge slackbridge serve --confirm-prod-write
 | `slackbridge health` | is the Claude CLI answering, is Codex installed, how many sessions are live, and is every required program present |
 | `slackbridge check` | build the Bolt app offline and report the resolved configuration, without a network call |
 | `slackbridge sessions …` | list, dispatch to, stop and close sessions from the terminal |
+| `slackbridge routes check` / `routes example` | validate the alert routes as `serve` would (`--workers`: what the next hand-over would do); print a commented `routes.toml` |
+| `slackbridge items list` / `items set` | the ledger of alerts and questions handed to a worker, and what became of each |
 | `slackbridge service-unit` | print a `systemd --user` unit with **this machine's** real paths |
 
 ## Configuration
@@ -56,6 +58,56 @@ startup. Real environment variables always win, so
 
 Required scopes for the bot token: `users:read.email`, `im:write`, `chat:write`,
 `im:history`. `slackbridge check` verifies them without posting anything.
+
+## Alert routes
+
+Besides the control channel, the bridge can watch team channels for alerts and hand each
+one — and every reply in its thread — to a **background worker session** it owns. It never
+writes to those channels, and it never types an alert into an interactive terminal session:
+the operator may have switched that session's permission mode (Shift+Tab), and a session
+stopped on a permission prompt nobody sees is an alert nobody answers.
+
+Routes live in `$XDG_CONFIG_HOME/slackbridge/routes.toml` (or `SLACKBRIDGE_ROUTES_FILE`).
+[`routes.example.toml`](routes.example.toml) is the commented template, identical to
+`slackbridge routes example`. Per route:
+
+| key | | |
+|---|---|---|
+| `name`, `channels`, `session`, `cwd`, `instructions` | required | `cwd` absolute and existing; `session` is the worker's name — not a terminal session's |
+| `trigger` | required unless every channel has its own | phrase making a top-level message an alert |
+| `channel_triggers` | | `{ C… = "*" }`: per channel; `*` = every top-level human message is a question |
+| `test_channels`, `ignore_users` | | the prompt says "test"; posts by these users are never routed |
+| `permission_mode` | `auto` | `acceptEdits`, `auto`, `bypassPermissions`, `manual`, `dontAsk`, `plan` |
+| `permission_prompts` | `none` under `dontAsk` | `host` or `none` → `--permission-prompts` |
+| `settings` | | absolute path of an existing file → `--settings` |
+| `setting_sources` | | `user`/`project`/`local`, list or `"a,b"` → `--setting-sources`. Allow-lists **merge** across sources, so a user-level `Bash(*)` reaches the worker unless `user` is left out |
+| `follow_thread_days`, `backfill_hours`, `seed_state` | `5`, `24`, — | thread follow window, catch-up window on start (0 = off), read-only seed of tracked threads |
+
+`serve` refuses to start on anything that would route silently wrong: an unknown mode, a
+missing settings file, a channel two routes claim, a trigger for a channel the route does
+not watch, two routes giving one worker different launch options. An unknown key is a
+warning. Without the file, the legacy `SLACK_ALERTS_*` variables (see `config.py`) still
+make one equivalent route named `env`, in `auto` mode; with it, they are ignored and a
+warning names them.
+
+**Before every hand-over** the worker is looked up by name in `claude agents --json --all`
+and its current mode read from the last `"permissionMode"` of its transcript. Measured on
+Claude Code 2.1.332:
+
+| the worker is… | the bridge runs | because |
+|---|---|---|
+| not there | `claude --bg <route flags> [--resume <last sid>] <prompt>` | a resumed copy keeps the conversation |
+| stopped, right mode | `claude --bg --resume <full sid> <prompt>` — **no flags** | any flag, even the same ones, starts a copy; a short id does too |
+| alive and idle, right mode | `claude stop <id>`, then the same | resuming a live session starts a copy |
+| in another (or unreadable) mode, or launched with other saved options | stop if alive, then `claude --bg <route flags> --resume <sid> <prompt>` | the copy has the history and the route's mode |
+| busy | queue it (in the state file); a drainer delivers the queue as one prompt when idle | resuming a busy session starts a copy instead of delivering |
+
+The worker records what it did with each item through the ledger CLI the prompt names:
+`slackbridge items set <CHANNEL:TS> --status in-progress` when it takes one, then the final
+status (`done`/`skipped` for a question; the tracker's status or `taken-by-other` for an
+alert). On start the catch-up re-sends every item of its window whose thread is still empty
+and whose ledger entry only the bridge ever wrote; one the worker touched, or with any
+reply, is not. A live redelivery of a known item is never sent twice.
 
 ## What it needs from the machine
 
@@ -110,7 +162,7 @@ else's starts and then cannot find either agent binary.
 ```bash
 cd apps/slack-bridge
 uv sync
-uv run pytest                    # 68 unit tests, offline
+uv run pytest                    # unit tests, offline
 uv run pytest -m integration     # 10 e2e against this machine
 uv run ruff check src tests
 uv run mypy src                  # strict
