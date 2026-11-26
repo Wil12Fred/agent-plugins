@@ -304,7 +304,7 @@ class AlertEvent:
 
 
 def message_text(event: dict[str, Any]) -> str:
-    """What a message says: its text, or, when it has none, the titles of its files.
+    """What a message says: its text, or, when it has none, its files' titles and plain text.
 
     Slack's email integration posts a forwarded email as a file with an empty ``text``
     and the email's subject as the file title (author ``USLACKBOT``). Without this, a
@@ -314,8 +314,12 @@ def message_text(event: dict[str, Any]) -> str:
     text = event.get("text") or ""
     if text.strip():
         return text
-    titles = [f.get("title") or f.get("name") or "" for f in event.get("files") or []]
-    return "\n".join(t for t in titles if t)
+    parts: list[str] = []
+    for f in event.get("files") or []:
+        parts.append(f.get("title") or f.get("name") or "")
+        # An email file also carries its body as plain text: the outcome lives there.
+        parts.append(f.get("plain_text") or f.get("preview_plain_text") or "")
+    return "\n".join(p for p in parts if p)
 
 
 def is_own_post(event: dict[str, Any], config: SlackConfig) -> bool:

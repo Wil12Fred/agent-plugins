@@ -948,7 +948,16 @@ def _email(ts_: str, subject: str) -> dict[str, Any]:
         "user": "USLACKBOT",
         "bot_id": "B0EMAIL",
         "text": "",
-        "files": [{"id": "F1", "mode": "email", "filetype": "email", "title": subject}],
+        "files": [
+            {
+                "id": "F1",
+                "mode": "email",
+                "filetype": "email",
+                "title": subject,
+                "plain_text": "Review of your submission has been completed. "
+                "It is now eligible for distribution.\n\nSubmission ID: abc-123",
+            }
+        ],
     }
 
 
@@ -958,6 +967,7 @@ def test_a_forwarded_email_is_matched_by_its_subject(store: alerts.AlertStore) -
     event = alerts.classify(_email(ts("100.1"), subject), config, store)
     assert event is not None and event.kind == "ALERT"
     assert "Example Studio" in event.text
+    assert "eligible for distribution" in event.text and "Submission ID: abc-123" in event.text
 
 
 def test_a_forwarded_email_without_the_phrase_is_ignored(store: alerts.AlertStore) -> None:
