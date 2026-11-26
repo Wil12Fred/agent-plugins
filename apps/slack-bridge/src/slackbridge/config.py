@@ -15,7 +15,7 @@ Two token identities exist and they are not interchangeable:
     loops (see the reply-loop regression covered in ``tests/test_access.py``).
 
 ``SLACK_TOKEN`` (``xoxp-…``)
-    Wilber's user identity. Only used where the *user* must be the author (deleting
+    The operator's user identity. Only used where the *user* must be the author (deleting
     the human's own messages — Slack lets each identity delete only what it wrote).
 
 Other knobs:

@@ -1264,7 +1264,7 @@ def drive_deliver(
 
     ```json
     {
-      "ticketName": "OPER-1010",
+      "ticketName": "ABC-123",
       "drivePath": "https://drive.google.com/drive/folders/<id>",
       "tasks": [
         {"taskName": "T1 — slogan",

@@ -210,7 +210,7 @@ def run_consent(client_secret_path: Path, *, scope: str = GMAIL_SCOPE, port: int
     """Run the installed-app loopback flow once and store the refresh token.
 
     Interactive by nature: it opens a browser and the user consents as
-    ``wilber.cutire@example.com``. Nothing on the organisation's side is mutated — the
+    ``someone@example.com``. Nothing on the organisation's side is mutated — the
     only write is the credential in the local OS keyring.
 
     Returns:

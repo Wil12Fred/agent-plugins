@@ -79,7 +79,7 @@ class WriteIntent:
     """A described mutation, evaluated before it is performed."""
 
     action: str
-    """Human description, e.g. "delete 12 lesson records at establishment 2213"."""
+    """Human description, e.g. "delete 12 records of account 42"."""
 
     target: str
     """What is being mutated, e.g. "lessons/1845877"."""

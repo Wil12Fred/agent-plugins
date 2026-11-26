@@ -63,7 +63,7 @@ class HttpClient:
     Usage::
 
         with HttpClient(base_url=settings.host("api"), token=token) as http:
-            data = http.get("/lessons/lessons", params={"establishmentId": 2213})
+            data = http.get("/items", params={"accountId": 42})
     """
 
     def __init__(

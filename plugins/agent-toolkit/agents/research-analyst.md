@@ -80,7 +80,7 @@ judgement anyone can check.
 **Scored 7–10** — an ADR draft, ready to be saved into `docs/decisions/`:
 what it is, the url and the commit you read, the five axis scores with a sentence
 each, exactly what it would be able to reach here, the version to pin, and the
-one-line recommendation. State plainly that installing it is Wilber's decision
+one-line recommendation. State plainly that installing it is the operator's decision
 and that you did not.
 
 **Scored 6 or less** — an adaptation plan: which part of the idea is worth having,

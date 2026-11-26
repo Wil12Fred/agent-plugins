@@ -9,7 +9,7 @@ import pytest
 from slackbridge.config import SlackConfig
 
 HUMAN = "U0OPERATOR"
-BOT_USER = "U0AM2GP95GV"
+BOT_USER = "U0BRIDGEBOT"
 
 
 def make_config(**overrides: object) -> SlackConfig:
@@ -22,7 +22,7 @@ def make_config(**overrides: object) -> SlackConfig:
         "allowed_user_ids": frozenset({HUMAN}),
         "bot_user_id": BOT_USER,
         "private_user_id": HUMAN,
-        "private_email": "wilber@example.com",
+        "private_email": "operator@example.com",
         "new_session_cwd": Path("/tmp"),
         "new_session_terminal": "auto",
         "watchdog_seconds": 600,

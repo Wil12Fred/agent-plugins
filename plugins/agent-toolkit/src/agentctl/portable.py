@@ -128,7 +128,7 @@ class Vocabulary:
         for term in self.terms:
             escaped = re.escape(term)
             # A trailing `-` or `_` marks a prefix (`oper-`, `sp_`): those are
-            # ticket keys and must match `OPER-917`, so no closing boundary.
+            # ticket keys and must match `ABC-123`, so no closing boundary.
             parts.append(escaped if term[-1] in "-_" else rf"\b{escaped}\b")
         return re.compile("|".join(parts), re.IGNORECASE)
 
