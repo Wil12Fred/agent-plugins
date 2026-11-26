@@ -73,3 +73,32 @@ def status(names: Iterable[str], sessions: list[dict[str, Any]]) -> list[dict[st
             }
         )
     return rows
+
+
+INTERACTIVE = "interactive"
+"""Remote Control is for interactive sessions only (docs); background (`bg`) ones cannot."""
+
+
+def status_all(sessions: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Every live session, oldest first. ``applies`` is false for kinds that cannot have
+    Remote Control, so they are listed but never counted as a failure."""
+    rows: list[dict[str, Any]] = []
+    for item in sorted(sessions, key=lambda s: s.get("startedAt") or 0):
+        bridge = str(item.get("bridgeSessionId") or "")
+        rows.append(
+            {
+                "name": item.get("name"),
+                "found": True,
+                "pid": item.get("pid"),
+                "kind": item.get("kind"),
+                "applies": item.get("kind") == INTERACTIVE,
+                "remote_control": bool(bridge),
+                "url": URL.format(bridge) if bridge else None,
+            }
+        )
+    return rows
+
+
+def all_ok(rows: list[dict[str, Any]]) -> bool:
+    """True when every row that can have Remote Control has it."""
+    return all(r["remote_control"] for r in rows if r.get("applies", True))

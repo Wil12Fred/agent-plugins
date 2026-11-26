@@ -624,22 +624,36 @@ def remote_control_check(
             help="Session name to check (repeatable). Default: every route's worker.",
         ),
     ] = None,
+    every: Annotated[
+        bool,
+        typer.Option(
+            "--all",
+            help="Check every live session instead of names. Background sessions are "
+            "listed but cannot have Remote Control, so they never fail the check.",
+        ),
+    ] = False,
     json_mode: ItemJsonOption = False,
 ) -> None:
-    """Say, for each named session, whether it is running and connected to Remote Control.
+    """Say, for each named session (or ``--all`` live ones), whether it is connected to
+    Remote Control.
 
-    Exits 1 when any of them is missing or not connected, so it can gate a script. Reads
-    ``$CLAUDE_HOME/sessions/*.json``; changes nothing.
+    Exits 1 when any session that can have it is missing or not connected, so it can gate
+    a script. Reads ``$CLAUDE_HOME/sessions/*.json``; changes nothing.
     """
     from slackbridge import remotecontrol
 
     _item_json(json_mode)
-    names = list(dict.fromkeys(session or [r.session for r in config.load().routes()]))
-    if not names:
-        raise ValidationError("no session to check: pass --session or configure a route")
-    rows = remotecontrol.status(names, remotecontrol.live_sessions())
-    get_output().result({"sessions": rows, "ok": all(r["remote_control"] for r in rows)})
-    if not all(r["remote_control"] for r in rows):
+    live = remotecontrol.live_sessions()
+    if every:
+        rows = remotecontrol.status_all(live)
+    else:
+        names = list(dict.fromkeys(session or [r.session for r in config.load().routes()]))
+        if not names:
+            raise ValidationError("no session to check: pass --session, --all or a route")
+        rows = remotecontrol.status(names, live)
+    ok = remotecontrol.all_ok(rows)
+    get_output().result({"sessions": rows, "ok": ok})
+    if not ok:
         # The runner calls the app with standalone_mode=False, where typer.Exit(1) only
         # becomes a return value nobody reads (measured: exit 0). SystemExit gets through.
         raise SystemExit(1)

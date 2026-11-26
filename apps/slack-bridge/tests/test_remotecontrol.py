@@ -66,3 +66,17 @@ def test_the_cli_exits_1_when_a_session_is_not_connected(tmp_path: Path) -> None
     )
     assert done.returncode == 1, done.stdout + done.stderr
     assert '"ok": false' in done.stdout
+
+
+def test_all_lists_every_live_session_and_only_interactive_ones_can_fail(tmp_path: Path) -> None:
+    """Rule: `--all` covers every live session; a background session cannot have Remote
+    Control, so it is listed but never makes the check fail — an interactive one without it does."""
+    _write(tmp_path, 50, name="a", kind="interactive", bridgeSessionId="session_A", startedAt=1)
+    _write(tmp_path, 51, name="b", kind="bg", startedAt=2)
+    live = remotecontrol.live_sessions(tmp_path, alive=lambda pid: True)
+    rows = remotecontrol.status_all(live)
+    assert [r["name"] for r in rows] == ["a", "b"] and rows[1]["applies"] is False
+    assert remotecontrol.all_ok(rows) is True
+    _write(tmp_path, 52, name="c", kind="interactive", startedAt=3)
+    live = remotecontrol.live_sessions(tmp_path, alive=lambda pid: True)
+    assert remotecontrol.all_ok(remotecontrol.status_all(live)) is False
