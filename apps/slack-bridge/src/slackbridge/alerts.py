@@ -348,6 +348,12 @@ def classify(event: dict[str, Any], config: SlackConfig, store: AlertStore) -> A
     if thread_ts and thread_ts != ts:
         if author in route.ignore_users:
             return None
+        if event.get("bot_id") or event.get("app_id"):
+            # In any route, a thread reply made through an app's API is the worker (or a
+            # tool) writing under a person's name — the worker replies as its operator.
+            # Routing it back would hand the worker its own answer: a loop. People typing
+            # in Slack carry no bot_id, so their replies still arrive.
+            return None
         # Union of the two sources: a thread the tracked-alerts state follows, or an item
         # the ledger holds open. Either one is enough; the reply is one event either way.
         alert = store.get(thread_ts, route.follow_seconds)

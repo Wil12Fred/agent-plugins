@@ -916,3 +916,24 @@ def test_backfill_hours_is_validated(clean_env: pytest.MonkeyPatch) -> None:
     clean_env.setenv("SLACK_ALERTS_BACKFILL_HOURS", "ayer")
     with pytest.raises(ConfigError, match="BACKFILL_HOURS"):
         load()
+
+
+def test_an_app_posted_thread_reply_is_never_routed_back_in_any_route(
+    store: alerts.AlertStore,
+) -> None:
+    """Rule: the worker replies through an app under a person's name; that reply must not
+    come back to it as a new instruction, even in a route that does not ignore the person."""
+    config = qa_config(alerts_ignore_user_ids=frozenset())
+    alerts.classify(qa_top(ts("800.1"), "duda"), config, store)
+    via_app = {
+        "channel": QA,
+        "ts": ts("800.2"),
+        "thread_ts": ts("800.1"),
+        "user": CS_USER,
+        "text": "respuesta",
+        "bot_id": "B_APP",
+    }
+    assert alerts.classify(via_app, config, store) is None
+    typed = {k: v for k, v in via_app.items() if k != "bot_id"}
+    event = alerts.classify(typed, config, store)
+    assert event is not None and event.kind == "THREAD_REPLY"
