@@ -121,7 +121,7 @@ def _dispatch_thread(
 
 def callback(event: dict[str, Any], client: WebClient, logger: Logger, config: SlackConfig) -> None:
     """Handle one ``message`` event. See the module docstring for the guard order."""
-    if event.get("channel") in config.alerts_channel_ids:
+    if event.get("channel") in config.watched_channels():
         routed = alerts.handle(event, config, logger, seen=_seen)
         # An alerts channel that is not also the control channel is chatter: stop here.
         # In the control channel, a message that was not an alert behaves as it always did.

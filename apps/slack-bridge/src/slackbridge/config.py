@@ -26,7 +26,11 @@ Other knobs:
 ``SLACK_BOT_USER_ID``    the app's own user id, never allowlisted.
 ``SLACK_PRIVATE_EMAIL``  DM recipient when no channel id is configured.
 
-Alert routing (:mod:`slackbridge.alerts`), off unless ``SLACK_ALERTS_CHANNEL_ID`` is set:
+Alert routing (:mod:`slackbridge.alerts`) is configured by a routes file
+(:mod:`slackbridge.routes`: ``$XDG_CONFIG_HOME/slackbridge/routes.toml`` or
+``SLACKBRIDGE_ROUTES_FILE``). When that file is absent, the legacy variables below describe
+one equivalent route named ``env``; when it is present, they are ignored with a warning.
+Off when neither exists:
 
 ``SLACK_ALERTS_CHANNEL_ID``     channel(s) watched for alerts, comma/space separated; never
                                 written to. May include the control channel: there an alert
@@ -38,7 +42,7 @@ Alert routing (:mod:`slackbridge.alerts`), off unless ``SLACK_ALERTS_CHANNEL_ID`
                                 human message is an alert (a Q&A channel), except those from
                                 ``SLACK_ALERTS_IGNORE_USER_IDS``; its text reaches the session
                                 as data. Every channel named here must also be watched.
-``SLACK_ALERTS_SESSION_NAME``   the Claude session the alerts go to (required).
+``SLACK_ALERTS_SESSION_NAME``   the background worker session the alerts go to (required).
 ``SLACK_ALERTS_SESSION_CWD``    where that session starts; defaults to ``NEW_SESSION_CWD``.
 ``SLACK_ALERTS_IGNORE_USER_IDS`` thread replies from these users are not routed;
                                 defaults to ``SLACK_PRIVATE_USER_ID``.
@@ -68,6 +72,9 @@ from pathlib import Path
 from opscore.env import load_env_file
 from opscore.errors import ConfigError
 from opscore.secrets import resolve
+
+from slackbridge import routes as routes_mod
+from slackbridge.routes import AlertRoute
 
 
 def keyring_user_token() -> tuple[str, str]:
@@ -123,6 +130,38 @@ class SlackConfig:
     alerts_state_path: Path = Path.home() / ".local" / "state" / "slackbridge" / "alerts.json"
     alerts_seed_state_path: Path | None = None
     workspace_url: str = ""
+    alert_routes: tuple[AlertRoute, ...] = ()
+    """Routes read from the routes file; empty = derive one from the ``alerts_*`` fields."""
+    routes_source: str = ""
+    routes_warnings: tuple[str, ...] = ()
+
+    def routes(self) -> tuple[AlertRoute, ...]:
+        """Every alert route: the file's, else the one the legacy variables describe."""
+        if self.alert_routes:
+            return self.alert_routes
+        if not self.alerts_channel_ids:
+            return ()
+        return (
+            routes_mod.legacy(
+                channels=self.alerts_channel_ids,
+                trigger=self.alerts_trigger,
+                channel_triggers=self.alerts_channel_triggers,
+                session=self.alerts_session_name,
+                cwd=self.alerts_session_cwd or self.new_session_cwd,
+                ignore_users=self.alerts_ignore_user_ids,
+                instructions=self.alerts_instructions,
+                backfill_hours=self.alerts_backfill_hours,
+                seed_state=self.alerts_seed_state_path,
+            ),
+        )
+
+    def route_for(self, channel: str) -> AlertRoute | None:
+        """The route watching ``channel``, or ``None``."""
+        return next((r for r in self.routes() if channel in r.all_channels), None)
+
+    def watched_channels(self) -> frozenset[str]:
+        """Every channel some alert route watches."""
+        return frozenset().union(*(r.all_channels for r in self.routes()))
 
     def require_bot_token(self) -> str:
         """Return the bot token or explain, without leaking anything, that it is missing."""
@@ -238,9 +277,6 @@ def _alerts_settings(private_user_id: str) -> dict[str, object]:
         "alerts_backfill_hours": _hours("SLACK_ALERTS_BACKFILL_HOURS", 24.0),
         "alerts_seed_state_path": _path("SLACK_ALERTS_SEED_STATE"),
     }
-    state = _path("SLACK_ALERTS_STATE")
-    if state:
-        settings["alerts_state_path"] = state
     return settings
 
 
@@ -249,6 +285,28 @@ def load() -> SlackConfig:
     load_env_file()
     cwd = os.environ.get("NEW_SESSION_CWD") or os.environ.get("CODEX_SESSIONS_NEW_SESSION_CWD", "")
     private_user_id = os.environ.get("SLACK_PRIVATE_USER_ID", "").strip()
+    alerts: dict[str, object]
+    routes_file = routes_mod.locate()
+    if routes_file is not None:
+        loaded = routes_mod.load_file(routes_file)
+        alerts = {
+            "alert_routes": loaded.routes,
+            "routes_source": loaded.source,
+            "routes_warnings": loaded.warnings,
+        }
+        if loaded.workspace_url:
+            alerts["workspace_url"] = loaded.workspace_url
+    else:
+        alerts = _alerts_settings(private_user_id)
+        if alerts:
+            alerts["routes_source"] = routes_mod.ENV_ROUTE_NAME
+    state = _path("SLACK_ALERTS_STATE")
+    if state:
+        alerts["alerts_state_path"] = state
+    settings: dict[str, object] = {
+        "workspace_url": os.environ.get("SLACK_WORKSPACE_URL", "").strip(),
+        **alerts,
+    }
     return SlackConfig(
         bot_token=resolve(env_var="SLACK_BOT_TOKEN", required=False),
         app_token=resolve(env_var="SLACK_APP_TOKEN", required=False),
@@ -265,6 +323,5 @@ def load() -> SlackConfig:
         new_session_cwd=Path(cwd).expanduser() if cwd else Path.cwd(),
         new_session_terminal=os.environ.get("NEW_SESSION_TERMINAL", "auto"),
         watchdog_seconds=int(os.environ.get("SLACK_WATCHDOG_SECONDS", "600")),
-        workspace_url=os.environ.get("SLACK_WORKSPACE_URL", "").strip(),
-        **_alerts_settings(private_user_id),  # type: ignore[arg-type]
+        **settings,  # type: ignore[arg-type]
     )

@@ -18,9 +18,10 @@ from typing import Any
 import pytest
 from conftest import BOT_USER, HUMAN, make_config
 
-from slackbridge import alerts, claude
+from slackbridge import alerts, claude, worker
 from slackbridge.config import ConfigError, SlackConfig, load
 from slackbridge.listeners import messages
+from slackbridge.routes import AlertRoute
 
 ALERTS = "C_ALERTS"
 CS_USER = "U_REPORTER"
@@ -126,7 +127,7 @@ def test_an_alert_is_classified_and_its_thread_tracked(store: alerts.AlertStore)
     assert event is not None
     assert (event.kind, event.ticket, event.thread_ts) == ("ALERT", "ABC-123", ts("100.1"))
     assert event.fields["Cliente"] == "Example Gym - Sede Norte"
-    assert store.get(ts("100.1")) == {"ticket": "ABC-123"}
+    assert store.get(ts("100.1")) == {"ticket": "ABC-123", "follow": alerts.TRACK_SECONDS}
 
 
 def test_a_reply_in_a_tracked_thread_is_routed(store: alerts.AlertStore) -> None:
@@ -342,7 +343,7 @@ def test_reply_prompt_marks_the_text_as_data(store: alerts.AlertStore) -> None:
     assert f"<@{CS_USER}>" in prompt and "Evalúa si hay que actuar" in prompt
 
 
-# --- dispatch ---------------------------------------------------------------
+# --- dispatch: the worker ----------------------------------------------------
 INTERACTIVE = {
     "name": "triage",
     "kind": "interactive",
@@ -351,22 +352,33 @@ INTERACTIVE = {
     "startedAt": 2000,
     "status": "idle",
 }
-BACKGROUND = {
+STOPPED = {
     "name": "triage",
     "kind": "background",
+    "id": "bg-stop",
     "sessionId": "sid-bg",
+    "cwd": "/srv/work",
     "startedAt": 1000,
-    "state": "completed",
+    "state": "done",
 }
+IDLE = {**STOPPED, "id": "bg-idle", "pid": 99, "status": "idle", "state": "done"}
+BUSY = {**STOPPED, "id": "bg-busy", "pid": 98, "status": "busy", "state": "working"}
 OTHER = {"name": "other", "kind": "interactive", "pid": 7, "sessionId": "sid-x", "startedAt": 3}
 
 
 @pytest.fixture
-def harness(monkeypatch: pytest.MonkeyPatch) -> dict[str, list[Any]]:
-    seen: dict[str, list[Any]] = {"live": [], "run": []}
-    monkeypatch.setattr(
-        claude, "send_live", lambda pid, msg: (seen["live"].append(pid), (True, "tmux:x"))[1]
-    )
+def harness(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
+    """Every subprocess captured; the worker's mode and saved flags set per test."""
+    seen: dict[str, Any] = {"run": [], "mode": "auto", "flags": None, "agents": []}
+
+    def forbidden(*_a: Any, **_k: Any) -> Any:
+        raise AssertionError("an alert must never be typed into a terminal session")
+
+    monkeypatch.setattr(claude, "send_live", forbidden)
+    monkeypatch.setattr(claude, "agents", lambda: list(seen["agents"]))
+    monkeypatch.setattr(worker, "transcript", lambda w, projects=None: None)
+    monkeypatch.setattr(worker, "last_mode", lambda path: seen["mode"])
+    monkeypatch.setattr(worker, "saved_flags", lambda w, home=None: seen["flags"])
 
     def run(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
         seen["run"].append((command, kwargs.get("cwd")))
@@ -376,60 +388,171 @@ def harness(monkeypatch: pytest.MonkeyPatch) -> dict[str, list[Any]]:
     return seen
 
 
-def _alert(store: alerts.AlertStore) -> alerts.AlertEvent:
-    event = alerts.classify(top(ts("100.1"), ALERT_TEXT), alerts_config(), store)
+def _alert(store: alerts.AlertStore, at: str = "100.1", config: Any = None) -> alerts.AlertEvent:
+    event = alerts.classify(top(ts(at), ALERT_TEXT), config or alerts_config(), store)
     assert event is not None
     return event
 
 
-def test_a_live_interactive_session_gets_the_prompt_typed_in(
-    monkeypatch: pytest.MonkeyPatch, harness: dict[str, list[Any]], store: alerts.AlertStore
+def test_an_interactive_namesake_is_never_typed_into_nor_resumed(
+    harness: dict[str, Any], store: alerts.AlertStore
 ) -> None:
-    monkeypatch.setattr(claude, "agents", lambda: [OTHER, BACKGROUND, INTERACTIVE])
-    assert alerts.dispatch(_alert(store), alerts_config(), store, LOG) == "live"
-    assert harness["live"] == [4242]
-    assert harness["run"] == []
-
-
-def test_no_live_session_resumes_the_known_one_in_the_background(
-    monkeypatch: pytest.MonkeyPatch, harness: dict[str, list[Any]], store: alerts.AlertStore
-) -> None:
-    monkeypatch.setattr(claude, "agents", lambda: [OTHER, BACKGROUND])
-    assert alerts.dispatch(_alert(store), alerts_config(), store, LOG) == "resume"
-    assert harness["live"] == []
+    """Rule: alerts go to a background worker only. An interactive session with the same name
+    may be in whatever mode the operator last chose (Shift+Tab) and block on a prompt."""
+    harness["agents"] = [OTHER, INTERACTIVE]
+    assert alerts.dispatch(_alert(store), alerts_config(), store, LOG) == "new"
     [(command, cwd)] = harness["run"]
-    assert command[1:7] == ["--bg", "--name", "triage", "--permission-mode", "auto", "--resume"]
-    assert command[7] == "sid-bg" and "ABC-123" in command[8]
+    assert command[1:6] == ["--bg", "--name", "triage", "--permission-mode", "auto"]
+    assert "sid-live" not in command and "--resume" not in command
     assert cwd == "/srv/work"
 
 
-def test_no_session_at_all_starts_a_fresh_named_one(
-    monkeypatch: pytest.MonkeyPatch, harness: dict[str, list[Any]], store: alerts.AlertStore
+def test_a_stopped_worker_in_the_route_mode_is_woken_without_flags(
+    harness: dict[str, Any], store: alerts.AlertStore
 ) -> None:
-    monkeypatch.setattr(claude, "agents", lambda: [OTHER])
+    """Rule (measured): any flag on `--bg --resume` of a stopped session starts a copy; no flag
+    continues the same session with its saved options."""
+    harness["agents"] = [INTERACTIVE, STOPPED]
+    assert alerts.dispatch(_alert(store), alerts_config(), store, LOG) == "wake"
+    [(command, _)] = harness["run"]
+    assert command[:4] == [claude.CLAUDE_BIN, "--bg", "--resume", "sid-bg"]
+    assert len(command) == 5 and "ABC-123" in command[4]
+
+
+def test_an_idle_live_worker_is_stopped_before_it_is_woken(
+    harness: dict[str, Any], store: alerts.AlertStore
+) -> None:
+    """Rule (measured): resuming a session whose process is alive, even idle, starts a copy."""
+    harness["agents"] = [IDLE]
+    assert alerts.dispatch(_alert(store), alerts_config(), store, LOG) == "wake"
+    [(stop, _), (wake, _)] = harness["run"]
+    assert stop == [claude.CLAUDE_BIN, "stop", "bg-idle"]
+    assert wake[:4] == [claude.CLAUDE_BIN, "--bg", "--resume", "sid-bg"]
+
+
+@pytest.mark.parametrize("mode", ["acceptEdits", "default", None])
+def test_a_worker_in_another_or_unknown_mode_is_relaunched_in_the_route_mode(
+    harness: dict[str, Any], store: alerts.AlertStore, mode: str | None
+) -> None:
+    """Rule: before every hand-over the worker's mode is read; a different or unreadable one
+    relaunches it with the route's flags, resuming its conversation (as a copy)."""
+    harness["agents"], harness["mode"] = [IDLE], mode
+    assert alerts.dispatch(_alert(store), alerts_config(), store, LOG) == "relaunch"
+    [(stop, _), (command, _)] = harness["run"]
+    assert stop == [claude.CLAUDE_BIN, "stop", "bg-idle"]
+    assert command[1:8] == [
+        "--bg",
+        "--name",
+        "triage",
+        "--permission-mode",
+        "auto",
+        "--resume",
+        "sid-bg",
+    ]
+
+
+def _file_route(tmp_path: Path, **extra: Any) -> SlackConfig:
+    settings = tmp_path / "worker.settings.json"
+    settings.write_text("{}")
+    route = AlertRoute(
+        name="r",
+        channels=frozenset({ALERTS}),
+        trigger=TRIGGER,
+        session="triage",
+        cwd=tmp_path,
+        instructions="Haz X.",
+        permission_mode="dontAsk",
+        settings=settings,
+        setting_sources=("project",),
+        **extra,
+    )
+    return make_config(alert_routes=(route,), workspace_url="https://ws.example.test")
+
+
+def test_a_saved_launch_option_that_differs_relaunches_the_worker(
+    harness: dict[str, Any], store: alerts.AlertStore, tmp_path: Path
+) -> None:
+    """Rule: --setting-sources/--settings/--permission-prompts are part of "the right mode"
+    when Claude Code's saved flags can be read; unreadable flags compare the mode only."""
+    config = _file_route(tmp_path)
+    good = {
+        "--permission-mode": "dontAsk",
+        "--permission-prompts": "none",
+        "--setting-sources": "project",
+        "--settings": str(tmp_path / "worker.settings.json"),
+    }
+    harness["agents"], harness["mode"] = [STOPPED], "dontAsk"
+    harness["flags"] = {**good, "--setting-sources": "user,project"}
+    assert alerts.dispatch(_alert(store, "100.1", config), config, store, LOG) == "relaunch"
+    [(command, cwd)] = harness["run"]
+    assert command[command.index("--setting-sources") + 1] == "project"
+    assert command[command.index("--permission-prompts") + 1] == "none"
+    assert command[command.index("--settings") + 1] == good["--settings"]
+    assert cwd == str(tmp_path)
+    # Controls: the same flags, or no readable flags at all, wake the worker as it is.
+    for flags in (good, None):
+        alerts._launched.clear()
+        harness["run"].clear()
+        harness["flags"] = flags
+        assert alerts.dispatch(_alert(store, "100.2", config), config, store, LOG) == "wake"
+
+
+def test_a_busy_worker_queues_and_the_drainer_delivers_everything_in_order(
+    harness: dict[str, Any], tmp_path: Path
+) -> None:
+    """Rule (measured): `--bg --resume` of a busy session starts a copy instead of delivering,
+    so prompts for a busy worker wait in a persisted queue and go out as one, in order."""
+    store = alerts.AlertStore(tmp_path / "alerts.json")
+    harness["agents"] = [BUSY]
+    first = alerts.dispatch(_alert(store, "100.1"), alerts_config(), store, LOG)
+    second = alerts.dispatch(_alert(store, "100.2"), alerts_config(), store, LOG)
+    assert (first, second) == ("queued", "queued") and harness["run"] == []
+    reopened = alerts.AlertStore(tmp_path / "alerts.json")  # survives a restart
+    assert len(reopened.pending("triage")) == 2
+    harness["agents"] = [STOPPED]
+    assert alerts.drain(alerts_config(), reopened, LOG) == {"triage": "wake"}
+    [(command, _)] = harness["run"]
+    prompt = command[-1]
+    first_key, second_key = f"{ALERTS}:{ts('100.1')}", f"{ALERTS}:{ts('100.2')}"
+    assert prompt.startswith("[alerta Slack] 2 mensajes pendientes")
+    assert prompt.index("1. ") < prompt.index(first_key) < prompt.index("2. ")
+    assert prompt.index("2. ") < prompt.index(second_key)
+    assert reopened.pending("triage") == []
+
+
+def test_a_turn_launched_moments_ago_counts_as_busy(
+    harness: dict[str, Any], store: alerts.AlertStore
+) -> None:
+    """Rule: right after a launch `claude agents` may not list the worker yet; a second alert
+    must queue, not start a second worker."""
+    assert alerts.dispatch(_alert(store, "100.1"), alerts_config(), store, LOG) == "new"
+    assert alerts.dispatch(_alert(store, "100.2"), alerts_config(), store, LOG) == "queued"
+    assert len(harness["run"]) == 1
+
+
+def test_a_remembered_worker_is_resumed_with_the_route_flags_when_no_longer_listed(
+    harness: dict[str, Any], store: alerts.AlertStore
+) -> None:
+    store.remember_worker("triage", "sid-old")
     assert alerts.dispatch(_alert(store), alerts_config(), store, LOG) == "new"
     [(command, _)] = harness["run"]
-    assert "--resume" not in command
     assert command[1:4] == ["--bg", "--name", "triage"]
-
-
-def test_a_remembered_session_id_is_resumed_when_agents_no_longer_lists_it(
-    monkeypatch: pytest.MonkeyPatch, harness: dict[str, list[Any]], store: alerts.AlertStore
-) -> None:
-    store.remember_session("sid-old")
-    monkeypatch.setattr(claude, "agents", lambda: [])
-    assert alerts.dispatch(_alert(store), alerts_config(), store, LOG) == "resume"
-    [(command, _)] = harness["run"]
     assert command[command.index("--resume") + 1] == "sid-old"
 
 
-def test_a_failed_injection_falls_back_to_the_background(
-    monkeypatch: pytest.MonkeyPatch, harness: dict[str, list[Any]], store: alerts.AlertStore
-) -> None:
-    monkeypatch.setattr(claude, "agents", lambda: [INTERACTIVE])
-    monkeypatch.setattr(claude, "send_live", lambda pid, msg: (False, "no route"))
-    assert alerts.dispatch(_alert(store), alerts_config(), store, LOG) == "resume"
-    assert len(harness["run"]) == 1
+def test_the_transcript_mode_is_the_last_one_recorded(tmp_path: Path) -> None:
+    """Rule: the mode the worker is in now is the LAST permissionMode of its transcript."""
+    path = tmp_path / "t.jsonl"
+    lines = [{"permissionMode": "auto"}, {"x": 1}, {"permissionMode": "dontAsk"}, {"y": 2}]
+    path.write_text("\n".join(json.dumps(x, separators=(",", ":")) for x in lines))
+    assert worker.last_mode(path) == "dontAsk"
+    assert worker.last_mode(tmp_path / "missing.jsonl") is None
+
+
+def test_the_project_slug_replaces_every_non_alphanumeric() -> None:
+    """Rule (measured): `/home/u/.cache/x` is stored under `-home-u--cache-x`."""
+    assert worker.project_slug("/home/u/.cache/sb-probe") == "-home-u--cache-sb-probe"
+    assert worker.project_slug("/home/u/Projects/a-b") == "-home-u-Projects-a-b"
 
 
 # --- a channel list, and the control channel as an alerts channel -------------
@@ -713,14 +836,14 @@ def test_backfill_routes_untracked_alerts_and_questions_oldest_first(
     ]
 
 
-def test_backfill_never_resends_a_message_the_old_state_already_tracked(
+def test_backfill_resends_a_tracked_message_nobody_took_while_its_thread_is_empty(
     store: alerts.AlertStore,
 ) -> None:
-    """Rule (reversed by the items ledger): an item dispatched before is never re-sent, even
-    with an empty thread — re-sending on every restart delivered handled alerts again."""
+    """Rule (operator, 2026-11-25): tracked or dispatched is not handled. An empty thread whose
+    item only the bridge ever wrote is re-sent; the ledger's live dedup does not apply here."""
     store.track(ts("-60"), None)
     client = _FakeHistory({QA: [{"ts": ts("-60"), "user": CS_USER, "text": "duda"}]})
-    assert _backfill(client, store) == []
+    assert [e.text for e in _backfill(client, store)] == ["duda"]
 
 
 def test_backfill_skips_anything_with_a_reply_in_either_kind_of_channel(

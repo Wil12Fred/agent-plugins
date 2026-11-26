@@ -52,8 +52,23 @@ def serve(config: SlackConfig | None = None, *, log_level: int = logging.INFO) -
     logging.basicConfig(level=log_level)
     app, resolved = build_app(config)
     watchdog.start(app.client, resolved.channel_id, interval=resolved.watchdog_seconds)
+    alert_log = logging.getLogger("slackbridge.alerts")
+    for warning in resolved.routes_warnings:
+        alert_log.warning("%s", warning)
+    for route in resolved.routes():
+        alert_log.info(
+            "alert route %r from %s: %d channel(s) (+%d test) -> worker %r %s",
+            route.name,
+            resolved.routes_source or "env",
+            len(route.channels),
+            len(route.test_channels),
+            route.session,
+            " ".join(route.launch_flags()[2:]),
+        )
     # Alerts that arrived while the listener was down are not redelivered by Slack.
-    alerts.start_backfill(app.client, resolved, logging.getLogger("slackbridge.alerts"))
+    alerts.start_backfill(app.client, resolved, alert_log)
+    # Prompts queued for a busy worker, including any left from before a restart.
+    alerts.start_drainer(resolved, alert_log)
     # slack_bolt ships py.typed but leaves SocketModeHandler.start()
     # unannotated, so strict mode rejects the one call that runs the listener.
     SocketModeHandler(app, resolved.require_app_token()).start()  # type: ignore[no-untyped-call]

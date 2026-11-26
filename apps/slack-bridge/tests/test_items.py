@@ -1,9 +1,14 @@
-"""The items ledger: an item handed to the alerts session is recorded, and never handed twice.
+"""The items ledger: an item handed to the alerts session is recorded, and handed again
+only when nobody took it.
 
 Observed before it existed: every restart's catch-up re-delivered alerts that were already
-delivered and handled; two test alerts arrived three times. These tests pin the rules that
-stop that, the CLI the session uses to record what it did, and thread replies being routed
-by the ledger (alert and question threads alike) to whoever handles the item.
+delivered and handled; two test alerts arrived three times. Observed after it existed (the
+operator's rule, 2026-11-25): a worker stopped right after the hand-over left a question
+dispatched, unanswered and untouched, and the catch-up never sent it again because "known"
+had been taken to mean "handled". These tests pin both: a live redelivery is never
+dispatched twice; the catch-up re-sends an empty-threaded item only the bridge ever wrote.
+Also the CLI the session uses to record what it did, and thread replies being routed by the
+ledger (alert and question threads alike) to whoever handles the item.
 """
 
 from __future__ import annotations
@@ -129,12 +134,56 @@ def catch_up(store: alerts.AlertStore, client: _History) -> list[alerts.AlertEve
     return sent
 
 
-def test_catch_up_skips_items_already_in_the_ledger(tmp_path: Path) -> None:
-    """Rule: the catch-up on start re-sends nothing the ledger knows — the observed bug."""
+def test_catch_up_resends_a_dispatched_but_untouched_item_whose_thread_is_empty(
+    tmp_path: Path,
+) -> None:
+    """Rule (operator, 2026-11-25): "known" is not "handled". An item the bridge dispatched,
+    that nobody marked and whose thread is still empty, is sent again on every start."""
     client = _History({QA: [{"ts": TS, "user": REPORTER, "text": "duda"}]})
     assert len(catch_up(restart(tmp_path), client)) == 1
+    assert len(catch_up(restart(tmp_path, "second.json"), client)) == 1
+    entry = items.ItemLedger().get(f"{QA}:{TS}")
+    assert entry is not None and items.untouched(entry)
+    assert [h["by"] for h in entry["history"]] == [items.BRIDGE, items.BRIDGE]
+
+
+def test_catch_up_resends_an_item_whose_hand_over_failed(tmp_path: Path) -> None:
+    client = _History({ALERTS: [{"ts": TS, "user": REPORTER, "text": ALERT_TEXT}]})
+    catch_up(restart(tmp_path), client)
+    items.ItemLedger().set_status(f"{ALERTS}:{TS}", items.DISPATCH_ERROR, by=items.BRIDGE)
+    assert len(catch_up(restart(tmp_path, "second.json"), client)) == 1
+
+
+@pytest.mark.parametrize(
+    ("status", "handler"),
+    [
+        ("in-progress", None),
+        ("done", None),
+        ("skipped", None),
+        ("taken-by-other", None),
+        ("En revisión", None),  # a tracker's own status name
+        (None, "subagent-1"),  # only a handler recorded
+    ],
+)
+def test_catch_up_never_resends_an_item_the_worker_touched(
+    tmp_path: Path, status: str | None, handler: str | None
+) -> None:
+    """Rule: an item whose ledger entry the worker wrote (status, or just a handler) was
+    taken; re-sending it would answer twice."""
+    client = _History({ALERTS: [{"ts": TS, "user": REPORTER, "text": ALERT_TEXT}]})
+    catch_up(restart(tmp_path), client)
+    items.ItemLedger().set_status(f"{ALERTS}:{TS}", status, handler=handler, by="worker")
     assert catch_up(restart(tmp_path, "second.json"), client) == []
-    assert catch_up(restart(tmp_path, "third.json"), client) == []
+
+
+def test_catch_up_never_resends_an_untouched_item_whose_thread_has_a_reply(
+    tmp_path: Path,
+) -> None:
+    """Rule: any reply in the thread means somebody answered; untouched or not, not re-sent."""
+    empty = _History({QA: [{"ts": TS, "user": REPORTER, "text": "duda"}]})
+    catch_up(restart(tmp_path), empty)
+    answered = _History({QA: [{"ts": TS, "user": REPORTER, "text": "duda", "reply_count": 1}]})
+    assert catch_up(restart(tmp_path, "second.json"), answered) == []
 
 
 def test_catch_up_still_dispatches_an_unknown_item(store: alerts.AlertStore) -> None:
@@ -144,15 +193,16 @@ def test_catch_up_still_dispatches_an_unknown_item(store: alerts.AlertStore) -> 
 
 # --- migration ----------------------------------------------------------------
 def test_items_in_the_old_tracked_state_count_as_known(tmp_path: Path) -> None:
-    """Rule: the first restart after deploy re-sends nothing the old state tracked."""
+    """Rule: an item the old state tracked is known — a live redelivery is not dispatched —
+    but it is untouched, so the catch-up re-sends it while its thread is empty."""
     (tmp_path / "alerts.json").write_text(json.dumps({"alerts": {TS: {"ticket": "ABC-123"}}}))
     store = alerts.AlertStore(tmp_path / "alerts.json")
     assert deliver(top(ALERTS, TS, ALERT_TEXT), store) == []
     client = _History({ALERTS: [{"ts": TS, "user": REPORTER, "text": ALERT_TEXT}]})
-    assert catch_up(store, client) == []
+    assert len(catch_up(store, client)) == 1
     entry = items.ItemLedger().get(f"{ALERTS}:{TS}")
-    assert entry is not None and entry["note"] == items.MIGRATED_NOTE
-    assert entry["history"][0]["by"] == "migration"
+    assert entry is not None and entry["history"][0]["by"] == "migration"
+    assert entry["history"][0]["status"] == items.DISPATCHED and items.untouched(entry)
 
 
 def test_a_seeded_item_counts_as_known_too(tmp_path: Path) -> None:

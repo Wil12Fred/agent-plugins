@@ -39,6 +39,17 @@ def _isolated_items_ledger(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> P
     return path
 
 
+@pytest.fixture(autouse=True)
+def _isolated_routes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """No test reads the operator's real ``routes.toml``, and no launch grace leaks across."""
+    from slackbridge import alerts
+
+    monkeypatch.delenv("SLACKBRIDGE_ROUTES_FILE", raising=False)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg-config"))
+    alerts._launched.clear()
+    return tmp_path / "xdg-config" / "slackbridge" / "routes.toml"
+
+
 @pytest.fixture
 def config() -> SlackConfig:
     return make_config()

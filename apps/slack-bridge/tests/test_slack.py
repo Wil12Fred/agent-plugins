@@ -72,6 +72,7 @@ def test_a_top_level_message_routes_to_the_right_engine(
         new_session_cwd=Path("/tmp"),
         new_session_terminal="auto",
         alerts_channel_ids=frozenset(),
+        watched_channels=frozenset,
     )
     logger = logging.getLogger("test")
 

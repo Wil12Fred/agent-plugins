@@ -38,7 +38,8 @@ from opscore.output import get_output
 from opscore.secrets import redact
 
 from slackbridge import channel as channel_mod
-from slackbridge import claude, codex, config, items, requirements, sessions
+from slackbridge import claude, codex, config, items, requirements, sessions, worker
+from slackbridge import routes as routes_mod
 from slackbridge.api import SlackAPI
 from slackbridge.blocks import result_blocks
 from slackbridge.replies import read_thread, resolve_instruction
@@ -99,6 +100,13 @@ items_app = typer.Typer(
     no_args_is_help=True,
 )
 app.add_typer(items_app, name="items")
+
+routes_app = typer.Typer(
+    name="routes",
+    help="Alert routes (routes.toml): validate them, print a template.",
+    no_args_is_help=True,
+)
+app.add_typer(routes_app, name="routes")
 
 DryRunOption = Annotated[
     bool, typer.Option("--dry-run", help="Rehearse: show what would run, change nothing.")
@@ -547,6 +555,54 @@ def items_set(
         by=by or os.environ.get("USER", ""),
     )
     get_output().result(updated, human=f"{parsed} → {updated.get('status')}")
+
+
+# --- routes ------------------------------------------------------------------
+@routes_app.command("check")
+def routes_check(
+    file: Annotated[
+        Path | None,
+        typer.Option("--file", help="Validate this file instead of the resolved configuration."),
+    ] = None,
+    workers: Annotated[
+        bool,
+        typer.Option(
+            "--workers",
+            help="Also say what the next hand-over would do to each worker (reads "
+            "`claude agents`; changes nothing).",
+        ),
+    ] = False,
+    json_mode: ItemJsonOption = False,
+) -> None:
+    """Validate the alert routes exactly as ``serve`` would, and show what they resolve to.
+
+    Without ``--file`` this is the listener's own resolution: the routes file when present
+    (``SLACKBRIDGE_ROUTES_FILE`` or ``$XDG_CONFIG_HOME/slackbridge/routes.toml``), else the
+    legacy ``SLACK_ALERTS_*`` variables as one route. An invalid file is an error here, as it
+    is at startup. Instructions are shown truncated.
+    """
+    _item_json(json_mode)
+    if file is not None:
+        loaded = routes_mod.load_file(file.expanduser())
+        found, source, warnings = loaded.routes, loaded.source, loaded.warnings
+    else:
+        cfg = config.load()
+        found, source, warnings = cfg.routes(), cfg.routes_source, cfg.routes_warnings
+    for warning in warnings:
+        get_output().warn(warning)
+    rows = [route.summary() for route in found]
+    if workers:
+        agents = claude.agents()
+        for row, route in zip(rows, found, strict=True):
+            decision = worker.plan(route, agents)
+            row["worker"] = {"next": decision.action, "reason": decision.reason}
+    get_output().result({"source": source or None, "routes": rows, "warnings": list(warnings)})
+
+
+@routes_app.command("example")
+def routes_example() -> None:
+    """Print a commented ``routes.toml`` template (validate yours with ``routes check``)."""
+    typer.echo(routes_mod.EXAMPLE, nl=False)
 
 
 @app.command("health")

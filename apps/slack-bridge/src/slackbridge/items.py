@@ -41,6 +41,11 @@ DISPATCHED = "dispatched"
 DISPATCH_ERROR = "dispatch-error"
 """Written by the bridge when the hand-over itself failed; the item is not retried."""
 MIGRATED_NOTE = "known from the tracked-alerts state before the ledger existed"
+BRIDGE = "bridge"
+"""The ``by`` of every history record the bridge itself writes."""
+MIGRATION = "migration"
+BRIDGE_STATUSES = frozenset({DISPATCHED, DISPATCH_ERROR})
+"""The statuses only the bridge writes: an item in one of them has not been taken yet."""
 
 KINDS = ("alert", "question")
 QUESTION_STATUSES = frozenset({"in-progress", "done", "skipped"})
@@ -80,6 +85,22 @@ def is_open(entry: dict[str, Any] | None) -> bool:
     if entry is None:
         return False
     return str(entry.get("status") or "").strip().casefold() not in terminal_statuses()
+
+
+def untouched(entry: dict[str, Any] | None) -> bool:
+    """True when only the bridge ever wrote ``entry``: nobody has taken the item yet.
+
+    Its status is still one the bridge sets (``dispatched``/``dispatch-error``) and every
+    history record is the bridge's or the migration's. Anything the session records with
+    ``slackbridge items set`` — a status, a note, a handler — makes it touched.
+    """
+    if entry is None:
+        return False
+    if str(entry.get("status") or "") not in BRIDGE_STATUSES:
+        return False
+    return all(
+        str(record.get("by") or "") in {BRIDGE, MIGRATION} for record in entry.get("history") or []
+    )
 
 
 def bridge_bin() -> str:
@@ -137,6 +158,11 @@ def update_command(key: str, kind: str) -> str:
     """The exact line a session runs to record what it did with ``key``."""
     status = "<estado del ticket>" if kind == "alert" else "in-progress|done|skipped"
     return f'{bridge_bin()} items set {key} --status "{status}"'
+
+
+def start_command(key: str) -> str:
+    """The line a session runs when it takes ``key``, so a catch-up never re-sends it."""
+    return f"{bridge_bin()} items set {key} --status in-progress"
 
 
 def _now() -> str:
@@ -247,7 +273,7 @@ class ItemLedger:
                 "first_dispatched_at": now,
                 "updated_at": now,
                 "history": [
-                    {"at": now, "status": DISPATCHED, "by": "migration" if known else "bridge"}
+                    {"at": now, "status": DISPATCHED, "by": MIGRATION if known else BRIDGE}
                 ],
             }
             return not known
