@@ -116,3 +116,19 @@ class TestBoltApp:
         assert config.channel_id == "C_TARGET"
         # 3 slash commands + 8 button actions + 2 modals + 2 events (message, app_home_opened)
         assert len(app._listeners) == 15
+
+
+def test_a_session_listed_twice_gets_one_card_and_unique_block_ids() -> None:
+    from slackbridge.blocks import sessions_blocks
+
+    sid = "29d4e18e-0000-0000-0000-000000000000"
+    rows = [
+        {"sid": sid, "short": "29d4e18e", "status": "closed", "title": "old"},
+        {"sid": sid, "short": "29d4e18e", "status": "idle", "pid": 42, "title": "live"},
+        {"sid": "other", "short": "other", "status": "idle", "pid": 7, "title": "x"},
+    ]
+    blocks = sessions_blocks(rows)
+    ids = [b["block_id"] for b in blocks if "block_id" in b]
+    assert len(ids) == len(set(ids))
+    titles = " ".join(b["text"]["text"] for b in blocks if b.get("type") == "section")
+    assert "live" in titles and "old" not in titles

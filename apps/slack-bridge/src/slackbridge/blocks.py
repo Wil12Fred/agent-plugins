@@ -110,6 +110,29 @@ def session_card(row: dict[str, Any]) -> list[dict[str, Any]]:
     ]
 
 
+def unique_sessions(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """One row per session id, keeping the live one (busy before idle) when it repeats.
+
+    A session can be listed twice — a resumed session and its own earlier process — and
+    each card's action row carries ``block_id = sess::<short id>``: Slack refuses the whole
+    message when a block_id repeats (``invalid_blocks``), so ``/sessions`` answered nothing.
+    """
+
+    def rank(row: dict[str, Any]) -> int:
+        return (2 if row.get("pid") else 0) + (1 if row.get("status") == "busy" else 0)
+
+    best: dict[str, dict[str, Any]] = {}
+    order: list[str] = []
+    for i, row in enumerate(rows):
+        key = row.get("sid") or f"#{i}"
+        if key not in best:
+            order.append(key)
+            best[key] = row
+        elif rank(row) > rank(best[key]):
+            best[key] = row
+    return [best[k] for k in order]
+
+
 def sessions_blocks(
     rows: list[dict[str, Any]], filt: dict[str, Any] | None = None
 ) -> list[dict[str, Any]]:
@@ -119,6 +142,7 @@ def sessions_blocks(
     Refrescar button, so refreshing reproduces exactly the same view.
     """
     filt = filt or {}
+    rows = unique_sessions(rows)
     tags = "".join(
         [
             " · live" if filt.get("live") else "",
