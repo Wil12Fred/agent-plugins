@@ -979,3 +979,9 @@ def test_a_forwarded_email_without_the_phrase_is_ignored(store: alerts.AlertStor
 def test_text_wins_over_file_titles() -> None:
     event = {"text": "hola", "files": [{"title": "submission is complete"}]}
     assert alerts.message_text(event) == "hola"
+
+
+def test_a_screenshot_without_words_is_still_no_text() -> None:
+    # Only an email file speaks for an empty message; any other file keeps it silent.
+    event = {"text": "", "files": [{"title": "image.png", "mode": "hosted", "filetype": "png"}]}
+    assert alerts.message_text(event) == ""

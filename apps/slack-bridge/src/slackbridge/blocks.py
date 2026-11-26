@@ -133,6 +133,20 @@ def unique_sessions(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [best[k] for k in order]
 
 
+def _unique_block_ids(blocks: list[dict[str, Any]]) -> None:
+    """Suffix any repeated ``block_id`` in place. Two sessions may share their 8-char short id,
+    and a row without one renders as ``sess::?``; Slack rejects the message on either."""
+    seen: dict[str, int] = {}
+    for block in blocks:
+        bid = block.get("block_id")
+        if not bid:
+            continue
+        count = seen.get(bid, 0)
+        seen[bid] = count + 1
+        if count:
+            block["block_id"] = f"{bid}::{count}"
+
+
 def sessions_blocks(
     rows: list[dict[str, Any]], filt: dict[str, Any] | None = None
 ) -> list[dict[str, Any]]:
@@ -175,6 +189,7 @@ def sessions_blocks(
                 break
             blocks.extend(session_card(row))
             shown += 1
+    _unique_block_ids(blocks)
     if len(rows) > shown:
         blocks.append(
             {

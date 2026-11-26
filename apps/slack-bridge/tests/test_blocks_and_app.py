@@ -132,3 +132,16 @@ def test_a_session_listed_twice_gets_one_card_and_unique_block_ids() -> None:
     assert len(ids) == len(set(ids))
     titles = " ".join(b["text"]["text"] for b in blocks if b.get("type") == "section")
     assert "live" in titles and "old" not in titles
+
+
+def test_block_ids_stay_unique_when_short_ids_collide() -> None:
+    from slackbridge.blocks import sessions_blocks
+
+    rows = [
+        {"sid": "aaaaaaaa-1", "short": "aaaaaaaa", "status": "idle", "pid": 1, "title": "one"},
+        {"sid": "aaaaaaaa-2", "short": "aaaaaaaa", "status": "idle", "pid": 2, "title": "two"},
+        {"short": "?", "status": "closed", "title": "no sid"},
+        {"short": "?", "status": "closed", "title": "no sid either"},
+    ]
+    ids = [b["block_id"] for b in sessions_blocks(rows) if "block_id" in b]
+    assert len(ids) == len(set(ids))

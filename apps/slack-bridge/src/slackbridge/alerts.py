@@ -304,7 +304,7 @@ class AlertEvent:
 
 
 def message_text(event: dict[str, Any]) -> str:
-    """What a message says: its text, or, when it has none, its files' titles and plain text.
+    """What a message says: its text, or, when it has none, its email files' subject and body.
 
     Slack's email integration posts a forwarded email as a file with an empty ``text``
     and the email's subject as the file title (author ``USLACKBOT``). Without this, a
@@ -316,6 +316,10 @@ def message_text(event: dict[str, Any]) -> str:
         return text
     parts: list[str] = []
     for f in event.get("files") or []:
+        if f.get("mode") != "email" and f.get("filetype") != "email":
+            # A screenshot posted without words stays what it was before: no text. Reading
+            # its file name would turn "image.png" into a question in a `*` channel.
+            continue
         parts.append(f.get("title") or f.get("name") or "")
         # An email file also carries its body as plain text: the outcome lives there.
         parts.append(f.get("plain_text") or f.get("preview_plain_text") or "")
