@@ -8,7 +8,7 @@ import pytest
 
 from slackbridge.config import SlackConfig
 
-HUMAN = "U06C51LCEAX"
+HUMAN = "U0OPERATOR"
 BOT_USER = "U0AM2GP95GV"
 
 
