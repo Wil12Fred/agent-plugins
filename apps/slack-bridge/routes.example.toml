@@ -13,16 +13,19 @@
 # Optional: https://<workspace>.slack.com, used to put a permalink in each prompt.
 workspace_url = "https://example.slack.com"
 
+# Three routes, one worker. Routes that share a `session` must share its cwd and every
+# launch option (permission_mode, permission_prompts, settings, setting_sources): one
+# worker has one mode. A channel belongs to exactly one route.
+
 [[route]]
 name = "critical"                     # required, unique
-channels = ["C0000000001", "C0000000002"]  # required; a channel belongs to one route
-trigger = "URGENT TICKET"             # phrase making a top-level message an alert;
+channels = ["C0000000001"]            # required; a channel belongs to one route
+trigger = "TICKET CRITICO"            # phrase making a top-level message an alert;
                                       # accent-, case- and emoji-insensitive
-channel_triggers = { C0000000002 = "*" }   # optional per-channel override; "*" = every
-                                      # top-level human message is a question (Q&A)
+# channel_triggers = { C0000000001 = "*" }  # optional per-channel override of `trigger`
 # test_channels = ["C0000000009"]     # optional; same handling, the prompt says "test"
 ignore_users = ["U0000000001"]        # optional; never routed (the operator's own posts)
-session = "critical-worker"           # required; the background worker's session name.
+session = "support-worker"            # required; the background worker's session name.
                                       # Do not reuse the name of a terminal session.
 cwd = "/path/to/project"              # required, absolute; where the worker runs
 permission_mode = "dontAsk"           # optional, default "auto": acceptEdits, auto,
@@ -39,10 +42,29 @@ instructions = """
 Triage the alert following your instructions for this kind of alert.
 """
 
-# [[route]]
-# name = "deploys"
-# channels = ["C0000000003"]
-# trigger = "DEPLOY FAILED"
-# session = "release-worker"
-# cwd = "/path/to/other/project"
-# instructions = "Find the failing job and summarise why."
+[[route]]
+name = "questions"
+channels = ["C0000000002"]
+trigger = "*"                         # every top-level human message is a question
+ignore_users = ["U0000000001"]
+session = "support-worker"
+cwd = "/path/to/project"
+permission_mode = "dontAsk"
+settings = "/path/to/project/.claude/worker.settings.json"
+setting_sources = "project"
+instructions = "Answer the question following your instructions for questions."
+
+[[route]]
+name = "owner"
+channels = ["C0000000003"]            # the control channel: once a route claims it, no
+                                      # message there opens a new session any more
+trigger = "*"
+from = ["U0000000001"]                # only these authors open items, and their thread
+                                      # replies are routed; must not overlap ignore_users.
+                                      # Posts made through an app's API are not theirs.
+session = "support-worker"
+cwd = "/path/to/project"
+permission_mode = "dontAsk"
+settings = "/path/to/project/.claude/worker.settings.json"
+setting_sources = "project"
+instructions = "Do what the operator asks, following your instructions for requests."

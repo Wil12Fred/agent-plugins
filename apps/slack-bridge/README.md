@@ -77,11 +77,16 @@ Routes live in `$XDG_CONFIG_HOME/slackbridge/routes.toml` (or `SLACKBRIDGE_ROUTE
 | `trigger` | required unless every channel has its own | phrase making a top-level message an alert |
 | `channel_triggers` | | `{ C… = "*" }`: per channel; `*` = every top-level human message is a question |
 | `test_channels`, `ignore_users` | | the prompt says "test"; posts by these users are never routed |
+| `from` | | Slack user ids: **only** they open items, and their thread replies are routed — the operator's own requests (the prompt says so). Must not overlap `ignore_users`; a post made through an app's API under their name (`bot_id` set) is not theirs and is ignored, so the worker never routes itself |
 | `permission_mode` | `auto` | `acceptEdits`, `auto`, `bypassPermissions`, `manual`, `dontAsk`, `plan` |
 | `permission_prompts` | `none` under `dontAsk` | `host` or `none` → `--permission-prompts` |
 | `settings` | | absolute path of an existing file → `--settings` |
 | `setting_sources` | | `user`/`project`/`local`, list or `"a,b"` → `--setting-sources`. Allow-lists **merge** across sources, so a user-level `Bash(*)` reaches the worker unless `user` is left out |
 | `follow_thread_days`, `backfill_hours`, `seed_state` | `5`, `24`, — | thread follow window, catch-up window on start (0 = off), read-only seed of tracked threads |
+
+**A channel a route claims belongs to it, the control channel included**: nothing there
+opens a new session any more. Put the control channel in a route with `trigger = "*"` and
+`from = [<your id>]` and your messages there become requests to the worker instead.
 
 `serve` refuses to start on anything that would route silently wrong: an unknown mode, a
 missing settings file, a channel two routes claim, a trigger for a channel the route does

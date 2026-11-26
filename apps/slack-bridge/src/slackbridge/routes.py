@@ -80,6 +80,7 @@ OPTIONAL_KEYS = frozenset(
         "follow_thread_days",
         "backfill_hours",
         "seed_state",
+        "from",
     }
 )
 ROUTE_KEYS = frozenset(REQUIRED_KEYS) | OPTIONAL_KEYS
@@ -98,6 +99,9 @@ class AlertRoute:
     channel_triggers: Mapping[str, str] = field(default_factory=dict)
     test_channels: frozenset[str] = frozenset()
     ignore_users: frozenset[str] = frozenset()
+    from_users: frozenset[str] = frozenset()
+    """TOML ``from``: when set, only these authors open items, and their thread replies are
+    routed; the route's items are then requests from the operator, not reports."""
     permission_mode: str = DEFAULT_PERMISSION_MODE
     permission_prompts: str | None = None
     settings: Path | None = None
@@ -163,6 +167,7 @@ class AlertRoute:
             "trigger": self.trigger,
             "channel_triggers": dict(sorted(self.channel_triggers.items())),
             "ignore_users": sorted(self.ignore_users),
+            "from": sorted(self.from_users),
             "session": self.session,
             "cwd": str(self.cwd),
             "launch": self.launch_flags(),
@@ -344,6 +349,14 @@ def _route(raw: Any, index: int, source: str, warnings: list[str]) -> AlertRoute
             f"{label}: missing key 'trigger' for {', '.join(uncovered)}",
             detail="set 'trigger', or give every channel its own in 'channel_triggers'",
         )
+    ignore = _ids(raw.get("ignore_users", []), label, "ignore_users", required=False)
+    authors = _ids(raw.get("from", []), label, "from", required=False)
+    if both := authors & ignore:
+        raise ConfigError(
+            f"{label}: key 'from' repeats {', '.join(sorted(both))} from 'ignore_users'",
+            detail="an author is either the one whose messages are routed or one who is "
+            "never routed, not both",
+        )
     seed = raw.get("seed_state")
     return AlertRoute(
         name=_text(raw["name"], label, "name"),
@@ -351,7 +364,8 @@ def _route(raw: Any, index: int, source: str, warnings: list[str]) -> AlertRoute
         test_channels=tests,
         trigger=trigger,
         channel_triggers=per_channel,
-        ignore_users=_ids(raw.get("ignore_users", []), label, "ignore_users", required=False),
+        ignore_users=ignore,
+        from_users=authors,
         session=_text(raw["session"], label, "session"),
         cwd=cwd,
         permission_mode=str(mode),
@@ -491,16 +505,19 @@ EXAMPLE = '''\
 # Optional: https://<workspace>.slack.com, used to put a permalink in each prompt.
 workspace_url = "https://example.slack.com"
 
+# Three routes, one worker. Routes that share a `session` must share its cwd and every
+# launch option (permission_mode, permission_prompts, settings, setting_sources): one
+# worker has one mode. A channel belongs to exactly one route.
+
 [[route]]
 name = "critical"                     # required, unique
-channels = ["C0000000001", "C0000000002"]  # required; a channel belongs to one route
-trigger = "URGENT TICKET"             # phrase making a top-level message an alert;
+channels = ["C0000000001"]            # required; a channel belongs to one route
+trigger = "TICKET CRITICO"            # phrase making a top-level message an alert;
                                       # accent-, case- and emoji-insensitive
-channel_triggers = { C0000000002 = "*" }   # optional per-channel override; "*" = every
-                                      # top-level human message is a question (Q&A)
+# channel_triggers = { C0000000001 = "*" }  # optional per-channel override of `trigger`
 # test_channels = ["C0000000009"]     # optional; same handling, the prompt says "test"
 ignore_users = ["U0000000001"]        # optional; never routed (the operator's own posts)
-session = "critical-worker"           # required; the background worker's session name.
+session = "support-worker"            # required; the background worker's session name.
                                       # Do not reuse the name of a terminal session.
 cwd = "/path/to/project"              # required, absolute; where the worker runs
 permission_mode = "dontAsk"           # optional, default "auto": acceptEdits, auto,
@@ -517,11 +534,30 @@ instructions = """
 Triage the alert following your instructions for this kind of alert.
 """
 
-# [[route]]
-# name = "deploys"
-# channels = ["C0000000003"]
-# trigger = "DEPLOY FAILED"
-# session = "release-worker"
-# cwd = "/path/to/other/project"
-# instructions = "Find the failing job and summarise why."
+[[route]]
+name = "questions"
+channels = ["C0000000002"]
+trigger = "*"                         # every top-level human message is a question
+ignore_users = ["U0000000001"]
+session = "support-worker"
+cwd = "/path/to/project"
+permission_mode = "dontAsk"
+settings = "/path/to/project/.claude/worker.settings.json"
+setting_sources = "project"
+instructions = "Answer the question following your instructions for questions."
+
+[[route]]
+name = "owner"
+channels = ["C0000000003"]            # the control channel: once a route claims it, no
+                                      # message there opens a new session any more
+trigger = "*"
+from = ["U0000000001"]                # only these authors open items, and their thread
+                                      # replies are routed; must not overlap ignore_users.
+                                      # Posts made through an app's API are not theirs.
+session = "support-worker"
+cwd = "/path/to/project"
+permission_mode = "dontAsk"
+settings = "/path/to/project/.claude/worker.settings.json"
+setting_sources = "project"
+instructions = "Do what the operator asks, following your instructions for requests."
 '''

@@ -585,13 +585,20 @@ def test_an_alert_in_the_control_channel_takes_only_the_alert_path(
     assert opened == []  # neither the alert nor its redelivery opened an unnamed session
 
 
-def test_an_ordinary_control_channel_message_still_opens_a_session(
+def test_a_control_channel_a_route_claims_never_opens_a_session(
     routed: list[alerts.AlertEvent], opened: list[str]
 ) -> None:
+    """Rule (operator, 2026-11-25): a channel a route claims belongs to the route, the control
+    channel included; a message there that is not an item is chatter, not a new session."""
     config = alerts_config(alerts_channel_ids=frozenset({ALERTS, CONTROL}))
     _deliver({"channel": CONTROL, "ts": ts("710.1"), "user": HUMAN, "text": "hola"}, config)
-    assert opened == ["hola"]
+    assert opened == []
     assert routed == []
+    # Control: an unclaimed control channel still opens a session.
+    _deliver(
+        {"channel": CONTROL, "ts": ts("710.2"), "user": HUMAN, "text": "hola"}, alerts_config()
+    )
+    assert opened == ["hola"]
 
 
 def test_a_human_post_carrying_an_app_bot_id_is_accepted_as_an_alert(

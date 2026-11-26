@@ -5,12 +5,12 @@
 * **top-level message** -> open a NEW live Claude session with that message as the prompt
   and answer in its thread, so the conversation can continue from there.
 
-Before any guard, a message from an **alerts channel** (``SLACK_ALERTS_CHANNEL_ID``) is
-handed to :mod:`slackbridge.alerts`. Only a trigger-phrase alert or a reply in a tracked
-alert's thread is routed (to one named session), and the bridge never writes there. What is
-not an alert is dropped silently — unless that channel is also the control channel, where
-it falls through to the guards below unchanged. An alert is never *also* treated as a
-control-channel message, so it cannot open a second, unnamed session. Edits and
+Before any guard, a message from a channel an **alert route** claims (``routes.toml``, or
+``SLACK_ALERTS_CHANNEL_ID``) is handed to :mod:`slackbridge.alerts` and goes no further.
+Only an item for the route's worker, or a reply in an item's thread, is routed, and the
+bridge never writes there. Everything else is dropped silently — **the control channel
+included**: once a route claims it, the route owns it, and no message there opens a new
+session (a route with ``from`` is how the operator's own requests reach the worker). Edits and
 redeliveries are skipped; on that path only the bridge's own bot user is dropped, not every
 ``bot_id`` (see :func:`slackbridge.alerts.is_own_post`).
 
@@ -122,11 +122,10 @@ def _dispatch_thread(
 def callback(event: dict[str, Any], client: WebClient, logger: Logger, config: SlackConfig) -> None:
     """Handle one ``message`` event. See the module docstring for the guard order."""
     if event.get("channel") in config.watched_channels():
-        routed = alerts.handle(event, config, logger, seen=_seen)
-        # An alerts channel that is not also the control channel is chatter: stop here.
-        # In the control channel, a message that was not an alert behaves as it always did.
-        if routed or event.get("channel") != config.channel_id:
-            return
+        # A channel a route claims belongs to that route, the control channel included:
+        # what is not an item for its worker is chatter, and never opens a session here.
+        alerts.handle(event, config, logger, seen=_seen)
+        return
     if config.channel_id and event.get("channel") != config.channel_id:
         return
     if event.get("subtype"):
