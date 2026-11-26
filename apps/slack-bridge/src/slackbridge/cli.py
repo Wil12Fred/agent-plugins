@@ -108,6 +108,13 @@ routes_app = typer.Typer(
 )
 app.add_typer(routes_app, name="routes")
 
+remote_app = typer.Typer(
+    name="remote-control",
+    help="Remote Control: which named Claude sessions are reachable from claude.ai/mobile.",
+    no_args_is_help=True,
+)
+app.add_typer(remote_app, name="remote-control")
+
 DryRunOption = Annotated[
     bool, typer.Option("--dry-run", help="Rehearse: show what would run, change nothing.")
 ]
@@ -606,6 +613,36 @@ def routes_check(
                 decision = worker.plan(route, agents, remembered=record.get("sid"))
                 row["worker"] = {"next": decision.action, "reason": decision.reason}
     get_output().result({"source": source or None, "routes": rows, "warnings": list(warnings)})
+
+
+@remote_app.command("check")
+def remote_control_check(
+    session: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--session",
+            help="Session name to check (repeatable). Default: every route's worker.",
+        ),
+    ] = None,
+    json_mode: ItemJsonOption = False,
+) -> None:
+    """Say, for each named session, whether it is running and connected to Remote Control.
+
+    Exits 1 when any of them is missing or not connected, so it can gate a script. Reads
+    ``$CLAUDE_HOME/sessions/*.json``; changes nothing.
+    """
+    from slackbridge import remotecontrol
+
+    _item_json(json_mode)
+    names = list(dict.fromkeys(session or [r.session for r in config.load().routes()]))
+    if not names:
+        raise ValidationError("no session to check: pass --session or configure a route")
+    rows = remotecontrol.status(names, remotecontrol.live_sessions())
+    get_output().result({"sessions": rows, "ok": all(r["remote_control"] for r in rows)})
+    if not all(r["remote_control"] for r in rows):
+        # The runner calls the app with standalone_mode=False, where typer.Exit(1) only
+        # becomes a return value nobody reads (measured: exit 0). SystemExit gets through.
+        raise SystemExit(1)
 
 
 @routes_app.command("example")

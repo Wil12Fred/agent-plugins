@@ -388,3 +388,19 @@ def test_under_systemd_the_worker_is_launched_in_its_own_scope() -> None:
     assert scoped[:3] == ["systemd-run", "--user", "--scope"]
     assert scoped[scoped.index("tmux") :][:4] == ["tmux", "new-session", "-d", "-s"]
     assert tmuxworker.launch_argv("w", "/srv", ["claude"], scoped=False)[0] == "tmux"
+
+
+def test_remote_control_adds_the_flag_named_after_the_worker(tmp_path: Path) -> None:
+    """Rule: a route with remote_control = true launches its worker reachable remotely, named
+    after the session (a worker under --setting-sources project never reads the user-level
+    remoteControlAtStartup); without the key the flag is absent."""
+    on = routes.parse(_toml(tmp_path) + "remote_control = true\n", "f").routes[0]
+    flags = on.launch_flags()
+    assert flags[flags.index("--remote-control") + 1] == on.session
+    off = routes.parse(_toml(tmp_path), "f").routes[0]
+    assert "--remote-control" not in off.launch_flags()
+
+
+def test_remote_control_must_be_a_boolean(tmp_path: Path) -> None:
+    with pytest.raises(ConfigError, match="remote_control"):
+        routes.parse(_toml(tmp_path, remote_control="yes"), "f")

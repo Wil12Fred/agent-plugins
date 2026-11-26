@@ -91,6 +91,7 @@ OPTIONAL_KEYS = frozenset(
         "seed_state",
         "from",
         "terminal",
+        "remote_control",
     }
 )
 ROUTE_KEYS = frozenset(REQUIRED_KEYS) | OPTIONAL_KEYS
@@ -117,6 +118,10 @@ class AlertRoute:
     permission_prompts: str | None = None
     settings: Path | None = None
     setting_sources: tuple[str, ...] = ()
+    remote_control: bool = False
+    """Launch the worker with ``--remote-control <session>``: it must be reachable from
+    claude.ai/mobile. A worker started with ``--setting-sources project`` never reads a
+    user-level ``remoteControlAtStartup``, so the flag is the only way it gets it."""
     follow_thread_days: float = DEFAULT_FOLLOW_DAYS
     backfill_hours: float = DEFAULT_BACKFILL_HOURS
     seed_state: Path | None = None
@@ -164,6 +169,8 @@ class AlertRoute:
         flags = ["--name", self.session]
         for flag, value in self.launch_options().items():
             flags += [flag, value]
+        if self.remote_control:
+            flags += ["--remote-control", self.session]
         return flags
 
     def summary(self, instructions_cap: int = 80) -> dict[str, Any]:
@@ -268,6 +275,13 @@ def _number(raw: dict[str, Any], key: str, default: float, where: str, *, zero: 
         bound = ">= 0 (0 turns it off)" if zero else "> 0"
         raise ConfigError(f"{where}: key {key!r} must be a number {bound}, got {value!r}")
     return float(value)
+
+
+def _flag(raw: Mapping[str, Any], key: str, label: str) -> bool:
+    value = raw.get(key, False)
+    if not isinstance(value, bool):
+        raise ConfigError(f"{label}: key {key!r} must be true or false, got {value!r}")
+    return value
 
 
 def parse_setting_sources(value: Any, where: str) -> tuple[str, ...]:
@@ -403,6 +417,7 @@ def _route(raw: Any, index: int, source: str, warnings: list[str]) -> AlertRoute
         permission_prompts=prompts,
         settings=settings,
         setting_sources=sources,
+        remote_control=_flag(raw, "remote_control", label),
         follow_thread_days=_number(
             raw, "follow_thread_days", DEFAULT_FOLLOW_DAYS, label, zero=False
         ),
