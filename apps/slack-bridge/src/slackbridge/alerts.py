@@ -303,6 +303,21 @@ class AlertEvent:
         return items.make_key(self.channel, self.thread_ts)
 
 
+def message_text(event: dict[str, Any]) -> str:
+    """What a message says: its text, or, when it has none, the titles of its files.
+
+    Slack's email integration posts a forwarded email as a file with an empty ``text``
+    and the email's subject as the file title (author ``USLACKBOT``). Without this, a
+    route watching a channel of forwarded emails — App Store review results, for one —
+    would match its trigger against "" and never fire.
+    """
+    text = event.get("text") or ""
+    if text.strip():
+        return text
+    titles = [f.get("title") or f.get("name") or "" for f in event.get("files") or []]
+    return "\n".join(t for t in titles if t)
+
+
 def is_own_post(event: dict[str, Any], config: SlackConfig) -> bool:
     """True for the bridge's own posts: the one thing the alerts path must never ingest.
 
@@ -331,7 +346,8 @@ def classify(event: dict[str, Any], config: SlackConfig, store: AlertStore) -> A
     route = config.route_for(channel)
     if route is None:
         return None
-    text = event.get("text") or ""
+    text = message_text(event)
+    from_files = bool(text) and not (event.get("text") or "").strip()
     thread_ts = event.get("thread_ts", "")
     request = bool(route.from_users)
     common: dict[str, Any] = {
@@ -423,7 +439,9 @@ def classify(event: dict[str, Any], config: SlackConfig, store: AlertStore) -> A
         author=author,
         fields=fields,
         known=not fresh,
-        text=" ".join(text.split())[:QUESTION_CAP] if request else "",
+        # An alert's own text travels as its labelled fields; a forwarded email has none, so
+        # its subject (the file title) is the only thing the worker would otherwise lack.
+        text=" ".join(text.split())[:QUESTION_CAP] if request or from_files else "",
         **common,
     )
 

@@ -937,3 +937,35 @@ def test_an_app_posted_thread_reply_is_never_routed_back_in_any_route(
     typed = {k: v for k, v in via_app.items() if k != "bot_id"}
     event = alerts.classify(typed, config, store)
     assert event is not None and event.kind == "THREAD_REPLY"
+
+
+# --- forwarded emails --------------------------------------------------------
+def _email(ts_: str, subject: str) -> dict[str, Any]:
+    """The shape Slack's email integration posts: no text, the subject as the file title."""
+    return {
+        "channel": ALERTS,
+        "ts": ts_,
+        "user": "USLACKBOT",
+        "bot_id": "B0EMAIL",
+        "text": "",
+        "files": [{"id": "F1", "mode": "email", "filetype": "email", "title": subject}],
+    }
+
+
+def test_a_forwarded_email_is_matched_by_its_subject(store: alerts.AlertStore) -> None:
+    config = alerts_config(alerts_trigger="submission is complete")
+    subject = "Review of your Example Studio (iOS) submission is complete."
+    event = alerts.classify(_email(ts("100.1"), subject), config, store)
+    assert event is not None and event.kind == "ALERT"
+    assert "Example Studio" in event.text
+
+
+def test_a_forwarded_email_without_the_phrase_is_ignored(store: alerts.AlertStore) -> None:
+    config = alerts_config(alerts_trigger="submission is complete")
+    email = _email(ts("100.1"), "Thank You for Submitting Your App")
+    assert alerts.classify(email, config, store) is None
+
+
+def test_text_wins_over_file_titles() -> None:
+    event = {"text": "hola", "files": [{"title": "submission is complete"}]}
+    assert alerts.message_text(event) == "hola"
