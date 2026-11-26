@@ -592,10 +592,19 @@ def routes_check(
         get_output().warn(warning)
     rows = [route.summary() for route in found]
     if workers:
+        from slackbridge import alerts, tmuxworker
+
         agents = claude.agents()
+        state = alerts.AlertStore(config.load().alerts_state_path)  # reads, never writes
         for row, route in zip(rows, found, strict=True):
-            decision = worker.plan(route, agents)
-            row["worker"] = {"next": decision.action, "reason": decision.reason}
+            record = state.worker_record(route.session)
+            if route.terminal == "tmux":
+                recorded = record.get("sid") if record.get("tmux") == route.session else None
+                step = tmuxworker.plan(route, agents, recorded=recorded or None)
+                row["worker"] = {"next": step.action, "reason": step.reason, **record}
+            else:
+                decision = worker.plan(route, agents, remembered=record.get("sid"))
+                row["worker"] = {"next": decision.action, "reason": decision.reason}
     get_output().result({"source": source or None, "routes": rows, "warnings": list(warnings)})
 
 

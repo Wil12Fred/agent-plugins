@@ -27,6 +27,8 @@ listener down, but it must not go unnoticed either.
 from __future__ import annotations
 
 import os
+import re
+import shutil
 import tomllib
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -51,6 +53,12 @@ PERMISSION_PROMPTS = frozenset({"host", "none"})
 """What ``claude --permission-prompts`` accepts."""
 SETTING_SOURCES = ("user", "project", "local")
 """What ``claude --setting-sources`` accepts."""
+TERMINALS = ("tmux", "background")
+"""How the worker runs: an interactive session in a detached tmux session (default, visible
+with ``tmux attach -t <session>``), or a ``claude --bg`` background session."""
+DEFAULT_TERMINAL = "tmux"
+TMUX_NAME = re.compile(r"^[A-Za-z0-9_-]+$")
+"""A tmux worker's session name doubles as its tmux session name: ``.``/``:`` are targets."""
 
 ENV_ALERT_VARS = (
     "SLACK_ALERTS_CHANNEL_ID",
@@ -62,6 +70,7 @@ ENV_ALERT_VARS = (
     "SLACK_ALERTS_SEED_STATE",
     "SLACK_ALERTS_INSTRUCTIONS",
     "SLACK_ALERTS_BACKFILL_HOURS",
+    "SLACK_ALERTS_TERMINAL",
 )
 """The legacy single-route variables the file replaces."""
 
@@ -81,6 +90,7 @@ OPTIONAL_KEYS = frozenset(
         "backfill_hours",
         "seed_state",
         "from",
+        "terminal",
     }
 )
 ROUTE_KEYS = frozenset(REQUIRED_KEYS) | OPTIONAL_KEYS
@@ -103,6 +113,7 @@ class AlertRoute:
     """TOML ``from``: when set, only these authors open items, and their thread replies are
     routed; the route's items are then requests from the operator, not reports."""
     permission_mode: str = DEFAULT_PERMISSION_MODE
+    terminal: str = DEFAULT_TERMINAL
     permission_prompts: str | None = None
     settings: Path | None = None
     setting_sources: tuple[str, ...] = ()
@@ -170,6 +181,7 @@ class AlertRoute:
             "from": sorted(self.from_users),
             "session": self.session,
             "cwd": str(self.cwd),
+            "terminal": self.terminal,
             "launch": self.launch_flags(),
             "follow_thread_days": self.follow_thread_days,
             "backfill_hours": self.backfill_hours,
@@ -357,6 +369,24 @@ def _route(raw: Any, index: int, source: str, warnings: list[str]) -> AlertRoute
             detail="an author is either the one whose messages are routed or one who is "
             "never routed, not both",
         )
+    terminal = raw.get("terminal", DEFAULT_TERMINAL)
+    if terminal not in TERMINALS:
+        raise ConfigError(
+            f"{label}: key 'terminal' is {terminal!r}",
+            detail="expected one of: " + ", ".join(TERMINALS),
+        )
+    session = _text(raw["session"], label, "session")
+    if terminal == "tmux":
+        if not TMUX_NAME.match(session):
+            raise ConfigError(
+                f"{label}: key 'session' is {session!r}, which tmux cannot name",
+                detail="use letters, digits, '-' and '_' (it is also the tmux session name)",
+            )
+        if shutil.which("tmux") is None:
+            raise ConfigError(
+                f"{label}: key 'terminal' is 'tmux' but tmux is not installed",
+                detail='install tmux, or set terminal = "background" (a claude --bg worker)',
+            )
     seed = raw.get("seed_state")
     return AlertRoute(
         name=_text(raw["name"], label, "name"),
@@ -366,9 +396,10 @@ def _route(raw: Any, index: int, source: str, warnings: list[str]) -> AlertRoute
         channel_triggers=per_channel,
         ignore_users=ignore,
         from_users=authors,
-        session=_text(raw["session"], label, "session"),
+        session=session,
         cwd=cwd,
         permission_mode=str(mode),
+        terminal=str(terminal),
         permission_prompts=prompts,
         settings=settings,
         setting_sources=sources,
@@ -403,11 +434,15 @@ def check_unique(routes: tuple[AlertRoute, ...], source: str) -> None:
                 )
             owner[channel] = route.name
         other = sessions.setdefault(route.session, route)
-        if (other.cwd, other.launch_options()) != (route.cwd, route.launch_options()):
+        if (other.cwd, other.terminal, other.launch_options()) != (
+            route.cwd,
+            route.terminal,
+            route.launch_options(),
+        ):
             raise ConfigError(
                 f"routes file {source}: route {route.name!r}: key 'session' — "
                 f"{route.session!r} is also the session of route {other.name!r}, with a "
-                "different cwd or launch options",
+                "different cwd, terminal or launch options",
                 detail="one worker has one mode; give each route its own session name, or "
                 "make their cwd/permission keys identical",
             )
@@ -468,6 +503,7 @@ def legacy(
     instructions: str,
     backfill_hours: float,
     seed_state: Path | None,
+    terminal: str = DEFAULT_TERMINAL,
 ) -> AlertRoute:
     """The single route the ``SLACK_ALERTS_*`` variables describe (already validated).
 
@@ -486,6 +522,7 @@ def legacy(
         instructions=instructions or DEFAULT_INSTRUCTIONS,
         backfill_hours=backfill_hours,
         seed_state=seed_state,
+        terminal=terminal,
     )
 
 
@@ -494,10 +531,12 @@ EXAMPLE = '''\
 # ($XDG_CONFIG_HOME/slackbridge/routes.toml, or wherever SLACKBRIDGE_ROUTES_FILE points)
 #
 # Each [[route]] watches some channels and hands every alert, and every reply in a
-# tracked alert's thread, to one named BACKGROUND Claude Code session — the worker. The
-# bridge starts that worker itself and keeps it in this route's permission mode: before
-# every hand-over it reads the worker's current mode, and relaunches it when the mode (or
-# any launch option below) differs. It never types into an interactive terminal session.
+# tracked alert's thread, to one named Claude Code session — the worker — that the bridge
+# starts and owns. By default it runs in a DETACHED tmux session named after it: nothing
+# opens on screen, and `tmux attach -t <session>` shows it (detach with Ctrl-b d). Before
+# every hand-over the bridge reads the worker's live mode and, if someone changed it
+# (Shift+Tab), kills that tmux session and resumes the same conversation in this route's
+# mode. It never types into a session that merely shares the worker's name.
 # The bridge never writes to these channels. Validate with:  slackbridge routes check
 #
 # When this file exists the SLACK_ALERTS_* variables are ignored (one warning says so).
@@ -506,7 +545,8 @@ EXAMPLE = '''\
 workspace_url = "https://example.slack.com"
 
 # Three routes, one worker. Routes that share a `session` must share its cwd and every
-# launch option (permission_mode, permission_prompts, settings, setting_sources): one
+# launch option (terminal, permission_mode, permission_prompts, settings,
+# setting_sources): one
 # worker has one mode. A channel belongs to exactly one route.
 
 [[route]]
@@ -520,6 +560,8 @@ ignore_users = ["U0000000001"]        # optional; never routed (the operator's o
 session = "support-worker"            # required; the background worker's session name.
                                       # Do not reuse the name of a terminal session.
 cwd = "/path/to/project"              # required, absolute; where the worker runs
+terminal = "tmux"                     # optional, default "tmux": a detached tmux session
+                                      # (needs tmux); "background" = a claude --bg session
 permission_mode = "dontAsk"           # optional, default "auto": acceptEdits, auto,
                                       # bypassPermissions, manual, dontAsk, plan
 # permission_prompts = "none"         # optional: host | none; default "none" under dontAsk
@@ -541,6 +583,7 @@ trigger = "*"                         # every top-level human message is a quest
 ignore_users = ["U0000000001"]
 session = "support-worker"
 cwd = "/path/to/project"
+terminal = "tmux"
 permission_mode = "dontAsk"
 settings = "/path/to/project/.claude/worker.settings.json"
 setting_sources = "project"
@@ -556,6 +599,7 @@ from = ["U0000000001"]                # only these authors open items, and their
                                       # Posts made through an app's API are not theirs.
 session = "support-worker"
 cwd = "/path/to/project"
+terminal = "tmux"
 permission_mode = "dontAsk"
 settings = "/path/to/project/.claude/worker.settings.json"
 setting_sources = "project"

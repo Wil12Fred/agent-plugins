@@ -2,10 +2,12 @@
 # ($XDG_CONFIG_HOME/slackbridge/routes.toml, or wherever SLACKBRIDGE_ROUTES_FILE points)
 #
 # Each [[route]] watches some channels and hands every alert, and every reply in a
-# tracked alert's thread, to one named BACKGROUND Claude Code session — the worker. The
-# bridge starts that worker itself and keeps it in this route's permission mode: before
-# every hand-over it reads the worker's current mode, and relaunches it when the mode (or
-# any launch option below) differs. It never types into an interactive terminal session.
+# tracked alert's thread, to one named Claude Code session — the worker — that the bridge
+# starts and owns. By default it runs in a DETACHED tmux session named after it: nothing
+# opens on screen, and `tmux attach -t <session>` shows it (detach with Ctrl-b d). Before
+# every hand-over the bridge reads the worker's live mode and, if someone changed it
+# (Shift+Tab), kills that tmux session and resumes the same conversation in this route's
+# mode. It never types into a session that merely shares the worker's name.
 # The bridge never writes to these channels. Validate with:  slackbridge routes check
 #
 # When this file exists the SLACK_ALERTS_* variables are ignored (one warning says so).
@@ -14,7 +16,8 @@
 workspace_url = "https://example.slack.com"
 
 # Three routes, one worker. Routes that share a `session` must share its cwd and every
-# launch option (permission_mode, permission_prompts, settings, setting_sources): one
+# launch option (terminal, permission_mode, permission_prompts, settings,
+# setting_sources): one
 # worker has one mode. A channel belongs to exactly one route.
 
 [[route]]
@@ -28,6 +31,8 @@ ignore_users = ["U0000000001"]        # optional; never routed (the operator's o
 session = "support-worker"            # required; the background worker's session name.
                                       # Do not reuse the name of a terminal session.
 cwd = "/path/to/project"              # required, absolute; where the worker runs
+terminal = "tmux"                     # optional, default "tmux": a detached tmux session
+                                      # (needs tmux); "background" = a claude --bg session
 permission_mode = "dontAsk"           # optional, default "auto": acceptEdits, auto,
                                       # bypassPermissions, manual, dontAsk, plan
 # permission_prompts = "none"         # optional: host | none; default "none" under dontAsk
@@ -49,6 +54,7 @@ trigger = "*"                         # every top-level human message is a quest
 ignore_users = ["U0000000001"]
 session = "support-worker"
 cwd = "/path/to/project"
+terminal = "tmux"
 permission_mode = "dontAsk"
 settings = "/path/to/project/.claude/worker.settings.json"
 setting_sources = "project"
@@ -64,6 +70,7 @@ from = ["U0000000001"]                # only these authors open items, and their
                                       # Posts made through an app's API are not theirs.
 session = "support-worker"
 cwd = "/path/to/project"
+terminal = "tmux"
 permission_mode = "dontAsk"
 settings = "/path/to/project/.claude/worker.settings.json"
 setting_sources = "project"

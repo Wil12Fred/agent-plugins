@@ -17,14 +17,14 @@ as one route). Two events exist, and everything else in a watched channel is ign
     status that is not terminal (alert *or* question), from anyone not in the route's
     ``ignore_users``.
 
-Both are handed to the route's **worker**, a background session the bridge owns
-(:mod:`slackbridge.worker`). An interactive terminal session is never typed into, even one
-with the same name: its permission mode is whatever the operator last chose, and a prompt
-it stops on is an alert nobody answers. Before every hand-over the worker is found by name
-in ``claude agents --json --all``, its mode read from its transcript, and it is started,
-woken, or relaunched in the route's mode as needed. A busy worker cannot be resumed (that
-starts a copy), so its prompts wait in a persisted queue and a drainer delivers them, in
-order and as one prompt, when it is idle.
+Both are handed to the route's **worker**, a session the bridge starts and owns: by default
+an interactive session in a detached tmux session (:mod:`slackbridge.tmuxworker`), else a
+``claude --bg`` session (:mod:`slackbridge.worker`). A session that merely shares the
+worker's name is never typed into. Before every hand-over the worker's mode is checked and
+it is started, injected into, or relaunched in the route's mode (``--resume``, same
+conversation). What cannot be delivered now — a busy background worker, a tmux worker
+mid-turn in the wrong mode, a launch not listed yet — waits in a persisted queue, and a
+drainer delivers it, in order and as one prompt.
 
 The remembered alerts, the last worker session per name and the pending queue live in a
 small JSON file (``SLACK_ALERTS_STATE``) so a restart of the listener keeps all three. A
@@ -56,7 +56,7 @@ from logging import Logger
 from pathlib import Path
 from typing import Any
 
-from slackbridge import claude, items, worker
+from slackbridge import claude, items, tmuxworker, worker
 from slackbridge.config import SlackConfig
 from slackbridge.routes import ANY, AlertRoute
 
@@ -146,7 +146,11 @@ class AlertStore:
             self._alerts.update(self._read(each).get("alerts") or {})
         own = self._read(path)
         self._alerts.update(own.get("alerts") or {})
-        self._workers: dict[str, str] = dict(own.get("workers") or {})
+        self._workers: dict[str, dict[str, Any]] = {
+            name: (value if isinstance(value, dict) else {"sid": value})
+            for name, value in (own.get("workers") or {}).items()
+            if value
+        }
         self._pending: dict[str, list[dict[str, Any]]] = {
             k: list(v) for k, v in (own.get("pending") or {}).items() if v
         }
@@ -218,14 +222,20 @@ class AlertStore:
             return dict(alert)
 
     def worker_session(self, name: str) -> str | None:
-        """The last background worker session id seen for ``name``, kept for ``--resume``."""
+        """The last worker session id recorded for ``name``, kept for ``--resume``."""
         with self._lock:
-            return self._workers.get(name)
+            return (self._workers.get(name) or {}).get("sid") or None
 
-    def remember_worker(self, name: str, sid: str) -> None:
+    def worker_record(self, name: str) -> dict[str, Any]:
+        """``{"sid": …, "tmux": …}`` as recorded for worker ``name`` (empty when none)."""
         with self._lock:
-            if sid and self._workers.get(name) != sid:
-                self._workers[name] = sid
+            return dict(self._workers.get(name) or {})
+
+    def remember_worker(self, name: str, sid: str, tmux: str | None = None) -> None:
+        record: dict[str, Any] = {"sid": sid, **({"tmux": tmux} if tmux else {})}
+        with self._lock:
+            if sid and self._workers.get(name) != record:
+                self._workers[name] = record
                 self._save()
 
     # --- the pending queue ---------------------------------------------------
@@ -538,6 +548,8 @@ def _deliver(route: AlertRoute, store: AlertStore, logger: Logger) -> str:
     entries = store.pending(route.session)
     if not entries:
         return "empty"
+    if route.terminal == "tmux":
+        return _deliver_tmux(route, store, logger, entries)
     name = route.session
     recent = time.monotonic() - _launched.get(name, -1e9) < LAUNCH_GRACE
     decision = worker.plan(
@@ -580,6 +592,112 @@ def _deliver(route: AlertRoute, store: AlertStore, logger: Logger) -> str:
         tickets,
     )
     return decision.action
+
+
+def _recent(name: str) -> bool:
+    return time.monotonic() - _launched.get(name, -1e9) < LAUNCH_GRACE
+
+
+def tmux_ops() -> tmuxworker.Tmux:
+    """The tmux operations in use (a seam: tests replace it)."""
+    return tmuxworker.Tmux()
+
+
+def _tmux_plan(route: AlertRoute, store: AlertStore) -> tmuxworker.Plan:
+    record = store.worker_record(route.session)
+    recorded = record.get("sid") if record.get("tmux") == route.session else None
+    return tmuxworker.plan(
+        route,
+        claude.agents(),
+        recorded=recorded or None,
+        just_launched=_recent(route.session),
+        tmux=tmux_ops(),
+    )
+
+
+def _launch_tmux(
+    route: AlertRoute, store: AlertStore, resume: str | None, prompt: str | None
+) -> tuple[bool, str]:
+    argv, sid = tmuxworker.command(route, resume=resume, prompt=prompt)
+    ok, info = tmux_ops().launch(route.session, str(route.cwd), argv)
+    if ok:
+        store.remember_worker(route.session, sid, tmux=route.session)
+        _launched[route.session] = time.monotonic()
+    return ok, info or f"session {sid}"
+
+
+def _deliver_tmux(
+    route: AlertRoute, store: AlertStore, logger: Logger, entries: list[dict[str, Any]]
+) -> str:
+    """The tmux worker: inject when it is ours and in mode, else (re)launch carrying it."""
+    name = route.session
+    try:
+        return _deliver_tmux_unguarded(route, store, logger, entries)
+    except (OSError, subprocess.SubprocessError) as exc:
+        logger.error("worker %r (tmux): %s", name, exc)
+        _fail_all(entries, store, logger, f"tmux worker failed: {exc}")
+        store.take(name, len(entries))
+        return "error"
+
+
+def _deliver_tmux_unguarded(
+    route: AlertRoute, store: AlertStore, logger: Logger, entries: list[dict[str, Any]]
+) -> str:
+    name = route.session
+    decision = _tmux_plan(route, store)
+    if decision.namesakes:
+        logger.warning(
+            "worker %r: other interactive session(s) with the same name (pid %s) are never used",
+            name,
+            ", ".join(map(str, decision.namesakes)),
+        )
+    if decision.action == "busy":
+        logger.info(
+            "worker %r (tmux): %s; %d prompt(s) queued", name, decision.reason, len(entries)
+        )
+        return "queued"
+    if decision.action == "conflict":
+        logger.error("worker %r (tmux): %s", name, decision.reason)
+        _fail_all(entries, store, logger, decision.reason)
+        store.take(name, len(entries))
+        return "error"
+    prompt = combine(entries)
+    if decision.action == "inject" and decision.pid:
+        ok, info = claude.send_live(decision.pid, prompt)
+    else:
+        if decision.action == "relaunch":
+            tmux_ops().kill(name)
+        ok, info = _launch_tmux(route, store, decision.resume, prompt)
+    store.take(name, len(entries))
+    if not ok:
+        logger.error("worker %r (tmux): %s failed: %s", name, decision.action, info)
+        _fail_all(entries, store, logger, f"{decision.action} failed: {info}")
+        return "error"
+    logger.info(
+        "worker %r (tmux): %s — %s; delivered %d prompt(s) (%s)",
+        name,
+        decision.action,
+        decision.reason,
+        len(entries),
+        info,
+    )
+    return decision.action
+
+
+def ensure_workers(config: SlackConfig, store: AlertStore, logger: Logger) -> dict[str, str]:
+    """On start: launch every tmux worker that is not running (resuming its recorded
+    session). A running one in the wrong mode is left to the first hand-over to relaunch."""
+    out: dict[str, str] = {}
+    for route in {r.session: r for r in config.routes() if r.terminal == "tmux"}.values():
+        with _dispatch_lock:
+            decision = _tmux_plan(route, store)
+            outcome, info = decision.action, decision.reason
+            if decision.action == "launch":
+                ok, detail = _launch_tmux(route, store, decision.resume, None)
+                outcome, info = ("launch" if ok else "error"), f"{info} ({detail})"
+        logger.info("worker %r (tmux) on start: %s — %s", route.session, outcome, info)
+        out[route.session] = outcome
+    return out
 
 
 def _fail_all(entries: list[dict[str, Any]], store: AlertStore, logger: Logger, why: str) -> None:
@@ -657,6 +775,8 @@ def backfill(
     or with any reply in its thread, is not. One unreadable channel is logged, not fatal.
     """
     store = store or store_for(config)
+    if run is None:
+        ensure_workers(config, store, logger)
     clock = now or time.time()
     routed: list[AlertEvent] = []
     for route in config.routes():
@@ -720,8 +840,9 @@ def _history(client: Any, channel: str, oldest: str) -> list[dict[str, Any]]:
 
 
 def start_backfill(client: Any, config: SlackConfig, logger: Logger) -> None:
-    """Run :func:`backfill` on a daemon thread so the socket opens without waiting for it."""
-    if any(r.backfill_hours > 0 for r in config.routes()):
+    """Ensure the workers, then run :func:`backfill`, on a daemon thread, so the socket
+    opens without waiting for either."""
+    if config.routes():
         threading.Thread(target=backfill, args=(client, config, logger), daemon=True).start()
 
 

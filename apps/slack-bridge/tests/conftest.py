@@ -40,13 +40,26 @@ def _isolated_items_ledger(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> P
 
 
 @pytest.fixture(autouse=True)
-def _isolated_routes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """No test reads the operator's real ``routes.toml``, and no launch grace leaks across."""
-    from slackbridge import alerts
+def _isolated_routes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest
+) -> Path:
+    """No test reads the operator's real ``routes.toml``, no launch grace leaks across, and
+    no unit test can start a real Claude session or touch the real tmux: a mutation that
+    sent a test down the other worker path once ran the real ``claude --bg``."""
+    from slackbridge import alerts, claude
+
+    if request.node.get_closest_marker("integration") is None:
+        monkeypatch.setattr(claude, "CLAUDE_BIN", str(tmp_path / "no-claude-in-unit-tests"))
 
     monkeypatch.delenv("SLACKBRIDGE_ROUTES_FILE", raising=False)
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg-config"))
     alerts._launched.clear()
+
+    class _NoTmux:
+        def __getattr__(self, name: str) -> object:
+            raise OSError("tests never drive the real tmux: replace alerts.tmux_ops")
+
+    monkeypatch.setattr(alerts, "tmux_ops", _NoTmux)
     return tmp_path / "xdg-config" / "slackbridge" / "routes.toml"
 
 

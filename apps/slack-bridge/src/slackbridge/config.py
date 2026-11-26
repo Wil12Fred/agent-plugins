@@ -50,6 +50,8 @@ Off when neither exists:
 ``SLACK_ALERTS_BACKFILL_HOURS`` on start, how far back to look for alerts that are not in
                                 the items ledger and whose thread is still empty; default
                                 24, 0 = off.
+``SLACK_ALERTS_TERMINAL``       how the worker runs: ``tmux`` (default: a detached tmux
+                                session named after it) or ``background`` (``claude --bg``).
 ``SLACK_ALERTS_STATE``          tracked alerts file; ``SLACK_ALERTS_SEED_STATE`` a read-only seed.
 
 The items ledger (:mod:`slackbridge.items`) reads its own variables, so the
@@ -127,6 +129,7 @@ class SlackConfig:
     alerts_ignore_user_ids: frozenset[str] = frozenset()
     alerts_instructions: str = ""
     alerts_backfill_hours: float = 24.0
+    alerts_terminal: str = routes_mod.DEFAULT_TERMINAL
     alerts_state_path: Path = Path.home() / ".local" / "state" / "slackbridge" / "alerts.json"
     alerts_seed_state_path: Path | None = None
     workspace_url: str = ""
@@ -152,6 +155,7 @@ class SlackConfig:
                 instructions=self.alerts_instructions,
                 backfill_hours=self.alerts_backfill_hours,
                 seed_state=self.alerts_seed_state_path,
+                terminal=self.alerts_terminal,
             ),
         )
 
@@ -227,6 +231,15 @@ def _hours(name: str, default: float) -> float:
     return value
 
 
+def _terminal() -> str:
+    raw = os.environ.get("SLACK_ALERTS_TERMINAL", "").strip() or routes_mod.DEFAULT_TERMINAL
+    if raw not in routes_mod.TERMINALS:
+        raise ConfigError(
+            f"SLACK_ALERTS_TERMINAL must be one of {', '.join(routes_mod.TERMINALS)}, got {raw!r}"
+        )
+    return raw
+
+
 def _path(name: str) -> Path | None:
     raw = os.environ.get(name, "").strip()
     return Path(raw).expanduser() if raw else None
@@ -276,6 +289,7 @@ def _alerts_settings(private_user_id: str) -> dict[str, object]:
         "alerts_instructions": os.environ.get("SLACK_ALERTS_INSTRUCTIONS", "").strip(),
         "alerts_backfill_hours": _hours("SLACK_ALERTS_BACKFILL_HOURS", 24.0),
         "alerts_seed_state_path": _path("SLACK_ALERTS_SEED_STATE"),
+        "alerts_terminal": _terminal(),
     }
     return settings
 

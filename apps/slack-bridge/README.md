@@ -62,10 +62,12 @@ Required scopes for the bot token: `users:read.email`, `im:write`, `chat:write`,
 ## Alert routes
 
 Besides the control channel, the bridge can watch team channels for alerts and hand each
-one — and every reply in its thread — to a **background worker session** it owns. It never
-writes to those channels, and it never types an alert into an interactive terminal session:
-the operator may have switched that session's permission mode (Shift+Tab), and a session
-stopped on a permission prompt nobody sees is an alert nobody answers.
+one — and every reply in its thread — to a **worker session** it starts and owns. By default
+the worker is an interactive Claude session in a **detached tmux session** named after it:
+nothing opens on screen, and `tmux attach -t support-worker` shows it (Ctrl-b d detaches).
+The bridge never writes to the watched channels, and never types into a session that merely
+shares the worker's name. It keeps the worker in the route's permission mode, because a
+worker someone Shift+Tab'd into `manual` stops on prompts nobody sees.
 
 Routes live in `$XDG_CONFIG_HOME/slackbridge/routes.toml` (or `SLACKBRIDGE_ROUTES_FILE`).
 [`routes.example.toml`](routes.example.toml) is the commented template, identical to
@@ -78,6 +80,7 @@ Routes live in `$XDG_CONFIG_HOME/slackbridge/routes.toml` (or `SLACKBRIDGE_ROUTE
 | `channel_triggers` | | `{ C… = "*" }`: per channel; `*` = every top-level human message is a question |
 | `test_channels`, `ignore_users` | | the prompt says "test"; posts by these users are never routed |
 | `from` | | Slack user ids: **only** they open items, and their thread replies are routed — the operator's own requests (the prompt says so). Must not overlap `ignore_users`; a post made through an app's API under their name (`bot_id` set) is not theirs and is ignored, so the worker never routes itself |
+| `terminal` | `tmux` | `tmux` (detached tmux session, attach on demand) or `background` (`claude --bg`, for a machine without tmux) |
 | `permission_mode` | `auto` | `acceptEdits`, `auto`, `bypassPermissions`, `manual`, `dontAsk`, `plan` |
 | `permission_prompts` | `none` under `dontAsk` | `host` or `none` → `--permission-prompts` |
 | `settings` | | absolute path of an existing file → `--settings` |
@@ -95,9 +98,27 @@ warning. Without the file, the legacy `SLACK_ALERTS_*` variables (see `config.py
 make one equivalent route named `env`, in `auto` mode; with it, they are ignored and a
 warning names them.
 
-**Before every hand-over** the worker is looked up by name in `claude agents --json --all`
-and its current mode read from the last `"permissionMode"` of its transcript. Measured on
-Claude Code 2.1.332:
+**Before every hand-over, a tmux worker** (the default) is checked: the tmux session with
+its name must run the Claude session id the state file recorded for it — anything else with
+that name is not ours, and is neither typed into nor killed (the item is marked
+`dispatch-error`). Its live mode is read from the pane's footer. Measured with Claude Code
+2.1.332 and tmux 3.8:
+
+| the worker is… | the bridge | because |
+|---|---|---|
+| not running | `tmux new-session -d -s <session> -c <cwd> claude <route flags> --resume <recorded sid> <prompt>` (`--session-id <new uuid>` the first time) | Claude submits a command-line prompt itself (busy 0.6 s after the launch; listed 1.2 s after a bare launch), so nothing waits on the TUI; an interactive `--resume` keeps the same session id |
+| ours, in the route's mode | types the prompt in (`tmux send-keys`), idle or busy | text sent mid-turn is queued by Claude itself and answered after the turn |
+| ours, in another mode, idle | `tmux kill-session`, then the launch above with `--resume` | the footer shows a Shift+Tab at once; the transcript only records it with the next prompt, and calls `manual` `"default"` |
+| ours, in another mode, mid-turn | queues it; the drainer retries | killing it would lose the turn |
+| launched seconds ago, not listed yet | queues it | a second launch would start a second worker |
+
+On start, after the listener connects, every tmux worker that is not running is launched
+(no prompt), and then the catch-up runs. The worker's session id and tmux session name are
+kept in the alerts state file, so a relaunch resumes the same conversation.
+
+**A background worker** (`terminal = "background"`) is found by name in
+`claude agents --json --all` and its mode read from the last `"permissionMode"` of its
+transcript:
 
 | the worker is… | the bridge runs | because |
 |---|---|---|

@@ -59,6 +59,11 @@ def alerts_config(**overrides: object) -> SlackConfig:
     return make_config(**base)
 
 
+def bg_config(**overrides: object) -> SlackConfig:
+    """The legacy route with a ``claude --bg`` worker (``terminal = "background"``)."""
+    return alerts_config(alerts_terminal="background", **overrides)
+
+
 @pytest.fixture
 def store(tmp_path: Path) -> alerts.AlertStore:
     return alerts.AlertStore(tmp_path / "alerts.json")
@@ -389,7 +394,7 @@ def harness(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
 
 
 def _alert(store: alerts.AlertStore, at: str = "100.1", config: Any = None) -> alerts.AlertEvent:
-    event = alerts.classify(top(ts(at), ALERT_TEXT), config or alerts_config(), store)
+    event = alerts.classify(top(ts(at), ALERT_TEXT), config or bg_config(), store)
     assert event is not None
     return event
 
@@ -400,7 +405,7 @@ def test_an_interactive_namesake_is_never_typed_into_nor_resumed(
     """Rule: alerts go to a background worker only. An interactive session with the same name
     may be in whatever mode the operator last chose (Shift+Tab) and block on a prompt."""
     harness["agents"] = [OTHER, INTERACTIVE]
-    assert alerts.dispatch(_alert(store), alerts_config(), store, LOG) == "new"
+    assert alerts.dispatch(_alert(store), bg_config(), store, LOG) == "new"
     [(command, cwd)] = harness["run"]
     assert command[1:6] == ["--bg", "--name", "triage", "--permission-mode", "auto"]
     assert "sid-live" not in command and "--resume" not in command
@@ -413,7 +418,7 @@ def test_a_stopped_worker_in_the_route_mode_is_woken_without_flags(
     """Rule (measured): any flag on `--bg --resume` of a stopped session starts a copy; no flag
     continues the same session with its saved options."""
     harness["agents"] = [INTERACTIVE, STOPPED]
-    assert alerts.dispatch(_alert(store), alerts_config(), store, LOG) == "wake"
+    assert alerts.dispatch(_alert(store), bg_config(), store, LOG) == "wake"
     [(command, _)] = harness["run"]
     assert command[:4] == [claude.CLAUDE_BIN, "--bg", "--resume", "sid-bg"]
     assert len(command) == 5 and "ABC-123" in command[4]
@@ -424,7 +429,7 @@ def test_an_idle_live_worker_is_stopped_before_it_is_woken(
 ) -> None:
     """Rule (measured): resuming a session whose process is alive, even idle, starts a copy."""
     harness["agents"] = [IDLE]
-    assert alerts.dispatch(_alert(store), alerts_config(), store, LOG) == "wake"
+    assert alerts.dispatch(_alert(store), bg_config(), store, LOG) == "wake"
     [(stop, _), (wake, _)] = harness["run"]
     assert stop == [claude.CLAUDE_BIN, "stop", "bg-idle"]
     assert wake[:4] == [claude.CLAUDE_BIN, "--bg", "--resume", "sid-bg"]
@@ -437,7 +442,7 @@ def test_a_worker_in_another_or_unknown_mode_is_relaunched_in_the_route_mode(
     """Rule: before every hand-over the worker's mode is read; a different or unreadable one
     relaunches it with the route's flags, resuming its conversation (as a copy)."""
     harness["agents"], harness["mode"] = [IDLE], mode
-    assert alerts.dispatch(_alert(store), alerts_config(), store, LOG) == "relaunch"
+    assert alerts.dispatch(_alert(store), bg_config(), store, LOG) == "relaunch"
     [(stop, _), (command, _)] = harness["run"]
     assert stop == [claude.CLAUDE_BIN, "stop", "bg-idle"]
     assert command[1:8] == [
@@ -464,6 +469,7 @@ def _file_route(tmp_path: Path, **extra: Any) -> SlackConfig:
         permission_mode="dontAsk",
         settings=settings,
         setting_sources=("project",),
+        terminal="background",
         **extra,
     )
     return make_config(alert_routes=(route,), workspace_url="https://ws.example.test")
@@ -504,19 +510,19 @@ def test_a_busy_worker_queues_and_the_drainer_delivers_everything_in_order(
     so prompts for a busy worker wait in a persisted queue and go out as one, in order."""
     store = alerts.AlertStore(tmp_path / "alerts.json")
     harness["agents"] = [BUSY]
-    first = alerts.dispatch(_alert(store, "100.1"), alerts_config(), store, LOG)
-    second = alerts.dispatch(_alert(store, "100.2"), alerts_config(), store, LOG)
+    first = alerts.dispatch(_alert(store, "100.1"), bg_config(), store, LOG)
+    second = alerts.dispatch(_alert(store, "100.2"), bg_config(), store, LOG)
     assert (first, second) == ("queued", "queued") and harness["run"] == []
     reopened = alerts.AlertStore(tmp_path / "alerts.json")  # survives a restart
     assert len(reopened.pending("triage")) == 2
     harness["agents"] = [STOPPED]
-    assert alerts.drain(alerts_config(), reopened, LOG) == {"triage": "wake"}
+    assert alerts.drain(bg_config(), reopened, LOG) == {"triage": "wake"}
     [(command, _)] = harness["run"]
     prompt = command[-1]
     first_key, second_key = f"{ALERTS}:{ts('100.1')}", f"{ALERTS}:{ts('100.2')}"
     assert prompt.startswith("[alerta Slack] 2 mensajes pendientes")
-    assert prompt.index("1. ") < prompt.index(first_key) < prompt.index("2. ")
-    assert prompt.index("2. ") < prompt.index(second_key)
+    assert prompt.index("\n\n1. ") < prompt.index(first_key) < prompt.index("\n\n2. ")
+    assert prompt.index("\n\n2. ") < prompt.index(second_key)
     assert reopened.pending("triage") == []
 
 
@@ -525,8 +531,8 @@ def test_a_turn_launched_moments_ago_counts_as_busy(
 ) -> None:
     """Rule: right after a launch `claude agents` may not list the worker yet; a second alert
     must queue, not start a second worker."""
-    assert alerts.dispatch(_alert(store, "100.1"), alerts_config(), store, LOG) == "new"
-    assert alerts.dispatch(_alert(store, "100.2"), alerts_config(), store, LOG) == "queued"
+    assert alerts.dispatch(_alert(store, "100.1"), bg_config(), store, LOG) == "new"
+    assert alerts.dispatch(_alert(store, "100.2"), bg_config(), store, LOG) == "queued"
     assert len(harness["run"]) == 1
 
 
@@ -534,7 +540,7 @@ def test_a_remembered_worker_is_resumed_with_the_route_flags_when_no_longer_list
     harness: dict[str, Any], store: alerts.AlertStore
 ) -> None:
     store.remember_worker("triage", "sid-old")
-    assert alerts.dispatch(_alert(store), alerts_config(), store, LOG) == "new"
+    assert alerts.dispatch(_alert(store), bg_config(), store, LOG) == "new"
     [(command, _)] = harness["run"]
     assert command[1:4] == ["--bg", "--name", "triage"]
     assert command[command.index("--resume") + 1] == "sid-old"
