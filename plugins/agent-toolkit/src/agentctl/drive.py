@@ -61,19 +61,34 @@ tool cheerfully creates a second copy of a folder that already exists.
 """
 
 
+DRIVE_SCOPE = "https://www.googleapis.com/auth/drive"
+"""Requested explicitly: a service-account token carries no Drive scope otherwise."""
+
+
 def token() -> str:
     """A Drive-scoped access token, or a refusal that says how to get one."""
     from_env = os.environ.get(TOKEN_ENV)
     if from_env:
         return from_env
-    try:
-        done = subprocess.run(
-            ["gcloud", "auth", "print-access-token"], capture_output=True, text=True, check=False
-        )
-    except FileNotFoundError as exc:
-        raise ConfigError(
-            "no access token", detail=f"set {TOKEN_ENV}, or install gcloud and authenticate"
-        ) from exc
+    # A service account gets no Drive scope unless it asks for it; a user login can
+    # only narrow to scopes it consented, so asking can fail there — then fall back
+    # to the plain token, which carries the user's consented Drive scope.
+    done = None
+    for args in (["--scopes", DRIVE_SCOPE], []):
+        try:
+            done = subprocess.run(
+                ["gcloud", "auth", "print-access-token", *args],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        except FileNotFoundError as exc:
+            raise ConfigError(
+                "no access token", detail=f"set {TOKEN_ENV}, or install gcloud and authenticate"
+            ) from exc
+        if done.returncode == 0 and done.stdout.strip():
+            break
+    assert done is not None
     if done.returncode != 0 or not done.stdout.strip():
         raise ConfigError(
             "gcloud has no access token",
