@@ -66,3 +66,20 @@ def _isolated_routes(
 @pytest.fixture
 def config() -> SlackConfig:
     return make_config()
+
+
+@pytest.fixture(autouse=True)
+def _no_real_tmux(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No unit test may start a real tmux session or claude process.
+
+    Measured: a launch path that bypassed the patched runner started a real `claude` in a
+    detached tmux session named after a test fixture. Tests that exercise the runners patch
+    them again on top of this.
+    """
+    from slackbridge import tmuxworker
+
+    def refuse(*args: object) -> object:
+        raise AssertionError(f"unit test reached real tmux/systemd-run: {args!r}")
+
+    monkeypatch.setattr(tmuxworker, "_tmux", refuse)
+    monkeypatch.setattr(tmuxworker, "_run", refuse)

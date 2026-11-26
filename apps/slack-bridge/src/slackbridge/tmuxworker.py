@@ -36,6 +36,7 @@ Decisions, before every hand-over (:func:`plan`):
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import uuid
@@ -75,6 +76,10 @@ def _tmux(*args: str) -> subprocess.CompletedProcess[str]:
     )
 
 
+def _run(argv: list[str]) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(argv, capture_output=True, text=True, timeout=TMUX_TIMEOUT, check=False)
+
+
 @dataclass
 class Tmux:
     """The four tmux operations the worker needs; replaced by a fake in tests."""
@@ -93,10 +98,32 @@ class Tmux:
         return _tmux("kill-session", "-t", f"={name}").returncode == 0
 
     def launch(self, name: str, cwd: str, argv: list[str]) -> tuple[bool, str]:
-        result = _tmux(
-            "new-session", "-d", "-s", name, "-x", PANE_WIDTH, "-y", PANE_HEIGHT, "-c", cwd, *argv
-        )
+        full = launch_argv(name, cwd, argv, scoped=_under_systemd())
+        # Both paths go through a module-level runner the tests replace, so no unit test can
+        # ever start a real tmux or claude.
+        result = _tmux(*full[1:]) if full[0] == "tmux" else _run(full)
         return result.returncode == 0, (result.stderr or result.stdout).strip()
+
+
+def _under_systemd() -> bool:
+    """True when the bridge runs as a systemd unit (``INVOCATION_ID``) and can make a scope."""
+    return bool(os.environ.get("INVOCATION_ID")) and shutil.which("systemd-run") is not None
+
+
+def launch_argv(name: str, cwd: str, argv: list[str], *, scoped: bool) -> list[str]:
+    """The command that starts the detached worker session.
+
+    Measured: the bridge's unit has ``KillMode=control-group``, so a tmux server it spawns
+    lives in its cgroup and every restart of the bridge killed the worker with it. Under
+    systemd the launch goes through its own transient scope (``systemd-run --user
+    --scope``), which outlives the unit. If a tmux server is already running elsewhere,
+    ``new-session`` simply joins it and the scope holds only the short-lived client.
+    """
+    tmux = ["tmux", "new-session", "-d", "-s", name, "-x", PANE_WIDTH, "-y", PANE_HEIGHT]
+    tmux += ["-c", cwd, *argv]
+    if not scoped:
+        return tmux
+    return ["systemd-run", "--user", "--scope", "--quiet", "--collect", *tmux]
 
 
 def footer_mode(pane: str) -> str | None:
@@ -181,11 +208,24 @@ def plan(
     )
 
 
-def command(route: AlertRoute, *, resume: str | None, prompt: str | None) -> tuple[list[str], str]:
-    """``(argv, session id)`` of the interactive claude a (re)launch runs."""
+def command(
+    route: AlertRoute,
+    *,
+    resume: str | None,
+    prompt: str | None,
+    has_transcript: Callable[[str], bool] | None = None,
+) -> tuple[list[str], str]:
+    """``(argv, session id)`` of the interactive claude a (re)launch runs.
+
+    ``--resume`` only when the recorded session has a transcript on disk. Measured: a worker
+    launched without a prompt and stopped before its first turn leaves no conversation, and
+    ``claude --resume`` of it exits at once — the tmux session closes with it. Such a session
+    is started fresh under the same id instead.
+    """
     sid = resume or str(uuid.uuid4())
+    exists = has_transcript or (lambda s: claude.find_session(s) is not None)
     argv = [claude.CLAUDE_BIN, *route.launch_flags()]
-    argv += ["--resume", sid] if resume else ["--session-id", sid]
+    argv += ["--resume", sid] if resume and exists(sid) else ["--session-id", sid]
     if prompt:
         argv.append(prompt)
     return argv, sid

@@ -65,6 +65,8 @@ def env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> dict[str, Any]:
     fake = FakeTmux()
     seen: dict[str, Any] = {"tmux": fake, "agents": [], "injected": []}
     monkeypatch.setattr(alerts, "tmux_ops", lambda: fake)
+    # A recorded worker's conversation exists on disk unless a test says otherwise.
+    monkeypatch.setattr(claude, "find_session", lambda sid: tmp_path / f"{sid}.jsonl")
     monkeypatch.setattr(claude, "agents", lambda: list(seen["agents"]))
     monkeypatch.setattr(
         claude,
@@ -318,6 +320,8 @@ def test_tmux_targets_are_exact_and_pane_commands_name_a_pane(
         return type("R", (), {"returncode": 0, "stdout": "123\n", "stderr": ""})()
 
     monkeypatch.setattr(tmuxworker, "_tmux", fake)
+    monkeypatch.setattr(tmuxworker, "_run", fake)
+    monkeypatch.delenv("INVOCATION_ID", raising=False)
     ops = tmuxworker.Tmux()
     ops.exists("w")
     ops.pane_pid("w")
@@ -355,3 +359,32 @@ def test_the_transcript_default_mode_is_manual(
     monkeypatch.setattr(tmuxworker.worker, "last_mode", lambda path: "default")
     monkeypatch.setattr(tmuxworker.worker, "transcript", lambda w, projects=None: None)
     assert dispatch(env) == "inject"
+
+
+def test_a_recorded_session_without_a_transcript_is_started_fresh_under_its_id() -> None:
+    """Rule: `--resume` of a conversation that never had a turn exits at once and takes the
+    tmux session with it; the same id is started fresh instead."""
+    route = AlertRoute(
+        name="r",
+        channels=frozenset({CHANNEL}),
+        trigger="*",
+        session="w",
+        cwd=Path("/srv"),
+        instructions="x",
+        permission_mode="dontAsk",
+    )
+    argv, sid = tmuxworker.command(
+        route, resume="sid-1", prompt=None, has_transcript=lambda s: False
+    )
+    assert sid == "sid-1" and argv[-2:] == ["--session-id", "sid-1"]
+    argv, _ = tmuxworker.command(route, resume="sid-1", prompt=None, has_transcript=lambda s: True)
+    assert argv[-2:] == ["--resume", "sid-1"]
+
+
+def test_under_systemd_the_worker_is_launched_in_its_own_scope() -> None:
+    """Rule: a restart of the bridge's unit (KillMode=control-group) must not kill the worker,
+    so the tmux launch leaves the unit's cgroup through a transient scope."""
+    scoped = tmuxworker.launch_argv("w", "/srv", ["claude"], scoped=True)
+    assert scoped[:3] == ["systemd-run", "--user", "--scope"]
+    assert scoped[scoped.index("tmux") :][:4] == ["tmux", "new-session", "-d", "-s"]
+    assert tmuxworker.launch_argv("w", "/srv", ["claude"], scoped=False)[0] == "tmux"
