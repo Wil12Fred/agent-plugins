@@ -17,11 +17,16 @@ sync: ## Install every package
 	@set -e; for p in $(ALL); do echo "── $$p"; (cd $$p && $(UV) sync --quiet --all-extras); done
 
 test: ## Run every offline suite. Integration is opt-in; see `make integration`
-	@set -e; for p in $(ALL); do printf "%-26s " "$$p"; (cd $$p && $(UV) run pytest -q | tail -1); done
+	@# Same as typecheck: `pytest | tail -1` alone would turn a red suite into a green gate.
+	@set -e; for p in $(ALL); do printf "%-26s " "$$p"; \
+		out=$$(cd $$p && $(UV) run pytest -q) || { echo; echo "$$out"; exit 1; }; \
+		echo "$$out" | tail -1; done
 
 integration: ## Run the suites that touch this machine and the network
 	@set -e; for p in apps/slack-bridge apps/jiractl; do \
-	  printf "%-26s " "$$p"; (cd $$p && $(UV) run pytest -m integration -q | tail -1); done
+	  printf "%-26s " "$$p"; \
+	  out=$$(cd $$p && $(UV) run pytest -m integration -q) || { echo; echo "$$out"; exit 1; }; \
+	  echo "$$out" | tail -1; done
 
 lint: ## Ruff over every package
 	@set -e; for p in $(ALL); do printf "%-26s " "$$p"; (cd $$p && $(UV) run ruff check src tests --output-format=concise | tail -1); done
@@ -30,7 +35,10 @@ fmt: ## Ruff format (writes)
 	@set -e; for p in $(ALL); do (cd $$p && $(UV) run ruff format src tests --quiet && $(UV) run ruff check src tests --fix --quiet) || true; done
 
 typecheck: ## mypy --strict over every package
-	@set -e; for p in $(ALL); do printf "%-26s " "$$p"; (cd $$p && $(UV) run mypy src | tail -1); done
+	@# `mypy | tail -1` alone reports tail's exit code, so a type error never failed the gate.
+	@set -e; for p in $(ALL); do printf "%-26s " "$$p"; \
+		out=$$(cd $$p && $(UV) run mypy src) || { echo; echo "$$out"; exit 1; }; \
+		echo "$$out" | tail -1; done
 
 validate: ## Every plugin manifest still parses
 	@set -e; for p in plugins/*/; do printf "%-26s " "$$p"; claude plugin validate "$$p" | tail -1; done

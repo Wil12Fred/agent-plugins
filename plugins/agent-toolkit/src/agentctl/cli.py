@@ -851,8 +851,9 @@ def pptx_split(
     )
     before = result["source_bytes"] / 1e6 if isinstance(result["source_bytes"], int) else 0.0
     after = result["bytes"] / 1e6 if isinstance(result["bytes"], int) else 0.0
-    stubbed = result.get("stubbed") or []
-    note = f", {len(stubbed)} media vaciado(s)" if stubbed else ""
+    stubbed = result.get("stubbed")
+    count = len(stubbed) if isinstance(stubbed, list) else 0
+    note = f", {count} media vaciado(s)" if count else ""
     _emit(
         result,
         as_json=as_json,
