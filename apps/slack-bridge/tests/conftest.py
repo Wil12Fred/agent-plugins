@@ -31,6 +31,14 @@ def make_config(**overrides: object) -> SlackConfig:
     return SlackConfig(**base)  # type: ignore[arg-type]
 
 
+@pytest.fixture(autouse=True)
+def _isolated_items_ledger(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Every test gets its own items ledger: the default path is the operator's real one."""
+    path = tmp_path / "state" / "items.json"
+    monkeypatch.setenv("SLACKBRIDGE_ITEMS_FILE", str(path))
+    return path
+
+
 @pytest.fixture
 def config() -> SlackConfig:
     return make_config()

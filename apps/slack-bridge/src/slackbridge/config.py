@@ -43,10 +43,19 @@ Alert routing (:mod:`slackbridge.alerts`), off unless ``SLACK_ALERTS_CHANNEL_ID`
 ``SLACK_ALERTS_IGNORE_USER_IDS`` thread replies from these users are not routed;
                                 defaults to ``SLACK_PRIVATE_USER_ID``.
 ``SLACK_ALERTS_INSTRUCTIONS``   what the session is told to do with a new alert.
-``SLACK_ALERTS_BACKFILL_HOURS`` on start, how far back to look for alerts whose thread is
-                                still empty, re-sent even if dispatched before; default 24,
-                                0 = off.
+``SLACK_ALERTS_BACKFILL_HOURS`` on start, how far back to look for alerts that are not in
+                                the items ledger and whose thread is still empty; default
+                                24, 0 = off.
 ``SLACK_ALERTS_STATE``          tracked alerts file; ``SLACK_ALERTS_SEED_STATE`` a read-only seed.
+
+The items ledger (:mod:`slackbridge.items`) reads its own variables, so the
+``slackbridge items`` CLI needs nothing else configured:
+
+``SLACKBRIDGE_ITEMS_FILE``      the ledger; default ``$XDG_STATE_HOME/slackbridge/items.json``.
+``SLACKBRIDGE_BIN``             the ``slackbridge`` the alerts session is told to run.
+``SLACKBRIDGE_TERMINAL_STATUSES`` closing statuses beyond ``done``/``skipped``/
+                                ``taken-by-other``, comma-separated: replies in such an item's
+                                thread stop being routed by the ledger.
 ``SLACK_WORKSPACE_URL``         ``https://<workspace>.slack.com``, for message permalinks.
 """
 

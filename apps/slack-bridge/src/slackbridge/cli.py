@@ -26,6 +26,7 @@ acknowledged at all it is rendered with :func:`opscore.secrets.redact`.
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 from typing import Annotated
 
@@ -37,7 +38,7 @@ from opscore.output import get_output
 from opscore.secrets import redact
 
 from slackbridge import channel as channel_mod
-from slackbridge import claude, codex, config, requirements, sessions
+from slackbridge import claude, codex, config, items, requirements, sessions
 from slackbridge.api import SlackAPI
 from slackbridge.blocks import result_blocks
 from slackbridge.replies import read_thread, resolve_instruction
@@ -91,6 +92,13 @@ app.add_typer(replies_app, name="replies")
 
 channel_app = typer.Typer(name="channel", help="Control-channel maintenance.", no_args_is_help=True)
 app.add_typer(channel_app, name="channel")
+
+items_app = typer.Typer(
+    name="items",
+    help="The items ledger: alerts and questions handed to the alerts session, and their status.",
+    no_args_is_help=True,
+)
+app.add_typer(items_app, name="items")
 
 DryRunOption = Annotated[
     bool, typer.Option("--dry-run", help="Rehearse: show what would run, change nothing.")
@@ -451,6 +459,96 @@ def clean(
 
 
 # --- service ---------------------------------------------------------------
+# --- items -------------------------------------------------------------------
+ITEM_COLUMNS = ["key", "kind", "ticket", "status", "handler", "updated_at", "note"]
+ItemJsonOption = Annotated[
+    bool, typer.Option("--json", help="Emit exactly one JSON envelope on stdout.")
+]
+ItemKeyArgument = Annotated[
+    str, typer.Argument(help="CHANNEL:TS of the top-level message, or its Slack permalink.")
+]
+
+
+def _item_json(json_mode: bool) -> None:
+    """Honour ``--json`` given after the subcommand, as well as before it."""
+    if json_mode:
+        from opscore.output import Output, set_output
+
+        set_output(Output(json_mode=True, quiet=get_output().quiet))
+
+
+@items_app.command("list")
+def items_list(
+    status: Annotated[str | None, typer.Option("--status", help="Only this status.")] = None,
+    kind: Annotated[str | None, typer.Option("--kind", help="alert | question.")] = None,
+    json_mode: ItemJsonOption = False,
+) -> None:
+    """List the ledger, oldest message first."""
+    _item_json(json_mode)
+    if kind is not None and kind not in items.KINDS:
+        raise ValidationError(f"unknown kind {kind!r}; expected one of {', '.join(items.KINDS)}")
+    rows = [
+        row
+        for row in items.ItemLedger().all()
+        if (status is None or row.get("status") == status)
+        and (kind is None or row.get("kind") == kind)
+    ]
+    get_output().table(rows, columns=ITEM_COLUMNS, title="items")
+
+
+@items_app.command("get")
+def items_get(key: ItemKeyArgument, json_mode: ItemJsonOption = False) -> None:
+    """Show one item, history included."""
+    _item_json(json_mode)
+    ledger = items.ItemLedger()
+    parsed = items.parse_key(key)
+    entry = ledger.get(parsed)
+    if entry is None:
+        raise NotFoundError(f"no item {parsed} in the ledger ({ledger.path})")
+    get_output().result({"key": parsed, **entry})
+
+
+@items_app.command("set")
+def items_set(
+    key: ItemKeyArgument,
+    status: Annotated[str | None, typer.Option("--status", help="The item's new status.")] = None,
+    note: Annotated[str | None, typer.Option("--note", help="Free text kept with it.")] = None,
+    handler: Annotated[
+        str | None, typer.Option("--handler", help="Id of the subagent handling the item.")
+    ] = None,
+    by: Annotated[str, typer.Option("--by", help="Who records it (history).")] = "",
+    json_mode: ItemJsonOption = False,
+) -> None:
+    """Record what happened to an item; appends to its history. Unknown keys are refused.
+
+    A question takes ``in-progress``, ``done`` or ``skipped``; an alert takes any
+    non-empty status — the tracker's status name, or ``taken-by-other``. ``--handler``
+    names the subagent working the item, so replies in its thread are forwarded to it.
+    """
+    _item_json(json_mode)
+    if status is None and note is None and handler is None:
+        raise ValidationError("nothing to set: pass --status, --note and/or --handler")
+    ledger = items.ItemLedger()
+    parsed = items.parse_key(key)
+    entry = ledger.get(parsed)
+    if entry is None:
+        raise NotFoundError(
+            f"no item {parsed} in the ledger",
+            detail=f"`slackbridge items list` shows what is there ({ledger.path})",
+        )
+    value = None if status is None else items.validate_status(str(entry.get("kind") or ""), status)
+    if handler is not None and not handler.strip():
+        raise ValidationError("empty --handler")
+    updated = ledger.set_status(
+        parsed,
+        value,
+        note=note,
+        handler=handler.strip() if handler else None,
+        by=by or os.environ.get("USER", ""),
+    )
+    get_output().result(updated, human=f"{parsed} → {updated.get('status')}")
+
+
 @app.command("health")
 def health() -> None:
     """Probe both backends: is the Claude CLI answering, is Codex installed, how many live sessions.

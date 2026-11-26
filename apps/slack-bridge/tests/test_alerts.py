@@ -713,14 +713,14 @@ def test_backfill_routes_untracked_alerts_and_questions_oldest_first(
     ]
 
 
-def test_backfill_resends_a_dispatched_message_that_is_still_unanswered(
+def test_backfill_never_resends_a_message_the_old_state_already_tracked(
     store: alerts.AlertStore,
 ) -> None:
-    """Rule: pending means "nobody answered", not "never sent" — a worker that died or was
-    stopped left the question open, and the restart must hand it over again."""
+    """Rule (reversed by the items ledger): an item dispatched before is never re-sent, even
+    with an empty thread — re-sending on every restart delivered handled alerts again."""
     store.track(ts("-60"), None)
     client = _FakeHistory({QA: [{"ts": ts("-60"), "user": CS_USER, "text": "duda"}]})
-    assert [e.text for e in _backfill(client, store)] == ["duda"]
+    assert _backfill(client, store) == []
 
 
 def test_backfill_skips_anything_with_a_reply_in_either_kind_of_channel(
