@@ -32,6 +32,7 @@ from __future__ import annotations
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from slackbridge import tmuxworker
@@ -52,6 +53,16 @@ class Ops:
     command: Callable[[AlertRoute, str], list[str]]
     sleep: Callable[[float], None] = time.sleep
     clock: Callable[[], float] = time.monotonic
+    parent: Callable[[int], int | None] = lambda pid: _ppid(pid)
+
+
+def _ppid(pid: int) -> int | None:
+    """The parent pid of ``pid`` (Linux ``/proc``); ``None`` when unknown."""
+    try:
+        fields = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()
+        return int(fields[1])
+    except (OSError, IndexError, ValueError):
+        return None
 
 
 @dataclass
@@ -73,6 +84,16 @@ def pane_busy(pane: str) -> bool:
     if any(m in pane for m in BUSY_MARKERS):
         return True
     return any(line.lstrip().startswith(SUBAGENT_RUNNING) for line in pane.splitlines())
+
+
+def _gone_from_pane(ops: Ops, name: str, sid: str, pane_pid: int) -> bool:
+    """The session no longer runs in (or under) the pane: /exit has taken effect."""
+    if not ops.tmux.exists(name) or ops.tmux.pane_pid(name) != pane_pid:
+        return True
+    agent = _agent(ops.agents(), sid)
+    return agent is None or (
+        agent.get("pid") != pane_pid and ops.parent(int(agent["pid"])) != pane_pid
+    )
 
 
 def _wait(ops: Ops, until: Callable[[], bool], timeout: float, step: float = 2.0) -> bool:
@@ -105,9 +126,16 @@ def restart(
 
     pane_pid = ops.tmux.pane_pid(name) if ops.tmux.exists(name) else None
     agent = _agent(ops.agents(), sid)
-    if pane_pid and agent and agent.get("pid") == pane_pid:
+    in_pane = bool(
+        pane_pid
+        and agent
+        and (agent.get("pid") == pane_pid or ops.parent(int(agent["pid"])) == pane_pid)
+    )
+    if in_pane and pane_pid:
+        # claude is the pane's process, or runs in the foreground of a shell in it (typed by
+        # hand); `claude stop` does not end an interactive session, /exit does.
         ops.send(name, "/exit")
-        _wait(ops, lambda: not ops.tmux.exists(name) or ops.tmux.pane_pid(name) != pane_pid, 30)
+        _wait(ops, lambda: _gone_from_pane(ops, name, sid, pane_pid), 30)
         res.steps.append("exit sent")
     if _agent(ops.agents(), sid) is not None:
         ops.stop(sid)

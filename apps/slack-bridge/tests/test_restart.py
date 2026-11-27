@@ -33,6 +33,7 @@ class World:
         self.relaunch_dies = False
         self.relaunch_name = NAME
         self.t = 0.0
+        self.child: int | None = None  # claude in the foreground of a shell pane
 
     # tmux
     def exists(self, _n: str) -> bool:
@@ -63,6 +64,8 @@ class World:
         return [self.agent] if self.agent else []
 
     def stop(self, _sid: str) -> bool:
+        if self.agent and self.agent["pid"] == self.child:
+            return True  # measured: `claude stop` does not end an interactive session
         self.agent = None
         return True
 
@@ -71,6 +74,8 @@ class World:
         if text == "/exit" and self.agent and self.agent["pid"] == self.pane_pid:
             self.session = False  # the pane closes; the session keeps running in background
             self.agent = {**self.agent, "pid": 999}
+        elif text == "/exit" and self.agent and self.agent["pid"] == self.child:
+            self.agent = {**self.agent, "pid": 999}  # shell stays; session goes to background
 
     def ops(self) -> restart.Ops:
         tmux = type(
@@ -92,6 +97,7 @@ class World:
             command=lambda _r, s: ["claude", "--resume", s],
             sleep=lambda s: setattr(self, "t", self.t + s),
             clock=lambda: self.t,
+            parent=lambda pid: self.pane_pid if pid == self.child else 1,
         )
 
 
@@ -164,6 +170,17 @@ def test_wait_lets_a_busy_worker_finish_first(tmp_path: Path) -> None:
         if w.t >= 10:
             w.pane = FOOTER
 
-    ops = restart.Ops(orig.tmux, orig.agents, orig.stop, orig.send, orig.command, sleep, orig.clock)
+    ops = restart.Ops(
+        orig.tmux, orig.agents, orig.stop, orig.send, orig.command, sleep, orig.clock, orig.parent
+    )
     res = restart.restart(route(tmp_path), SID, ops, wait_idle=60)
     assert res.ok, res.error
+
+
+def test_claude_in_the_foreground_of_a_shell_pane_gets_exit_then_stop(tmp_path: Path) -> None:
+    """Rule: claude typed into a shell is a child of the pane; /exit it (stop alone fails)."""
+    w = World(pane_is_claude=False)
+    w.child = 555
+    res = restart.restart(route(tmp_path), SID, w.ops())
+    assert res.ok, res.error
+    assert w.sent[0] == "/exit" and w.killed == 1 and w.agent and w.agent["pid"] == 200
