@@ -115,6 +115,13 @@ remote_app = typer.Typer(
 )
 app.add_typer(remote_app, name="remote-control")
 
+worker_app = typer.Typer(
+    name="worker",
+    help="A route's tmux worker: restart it safely (new permissions need a restart).",
+    no_args_is_help=True,
+)
+app.add_typer(worker_app, name="worker")
+
 DryRunOption = Annotated[
     bool, typer.Option("--dry-run", help="Rehearse: show what would run, change nothing.")
 ]
@@ -848,3 +855,75 @@ def main() -> None:
     from opscore.cli import run
 
     run(app)
+
+
+@worker_app.command("restart")
+def worker_restart(
+    session: Annotated[
+        str | None,
+        typer.Option(
+            "--session", help="Worker (route session) name. Default: the only tmux worker."
+        ),
+    ] = None,
+    wait: Annotated[
+        float,
+        typer.Option(
+            "--wait", help="Seconds to wait for the worker to be idle (no turn, no subagent)."
+        ),
+    ] = 0.0,
+    dry_run: DryRunOption = False,
+    confirm: ConfirmOption = False,
+    json_mode: ItemJsonOption = False,
+) -> None:
+    """Restart a tmux worker on its recorded session: wait idle, /exit, stop, relaunch, verify.
+
+    Its conversation continues (same session id, same route flags). Refuses while the worker
+    is mid-turn or a subagent runs, unless ``--wait`` gives it time to finish.
+    """
+    import subprocess
+
+    from slackbridge import alerts, restart, tmuxworker
+
+    _item_json(json_mode)
+    cfg = config.load()
+    tmux_routes = {r.session: r for r in cfg.routes() if r.terminal == "tmux"}
+    if session is None:
+        if len(tmux_routes) != 1:
+            raise ValidationError(f"pass --session: tmux workers are {sorted(tmux_routes)}")
+        session = next(iter(tmux_routes))
+    route = tmux_routes.get(session)
+    if route is None:
+        raise ValidationError(f"{session!r} is not a tmux worker; known: {sorted(tmux_routes)}")
+    record = alerts.AlertStore(cfg.alerts_state_path).worker_record(session)
+    sid = record.get("sid") if record.get("tmux") == session else None
+    if not sid:
+        raise ValidationError(f"no recorded session for worker {session!r}")
+    if dry_run or not confirm:
+        get_output().result({"session": session, "sid": sid, "would": "restart", "dry_run": True})
+        return
+
+    def send(name: str, text: str) -> None:
+        subprocess.run(
+            ["tmux", "send-keys", "-t", f"={name}:", "-l", text], check=False, timeout=10
+        )
+        subprocess.run(["tmux", "send-keys", "-t", f"={name}:", "Enter"], check=False, timeout=10)
+
+    def stop(s: str) -> bool:
+        agent = next((a for a in claude.agents() if a.get("sessionId") == s), {})
+        ref = str(agent.get("id") or s)
+        return (
+            subprocess.run([claude.CLAUDE_BIN, "stop", ref], check=False, timeout=60).returncode
+            == 0
+        )
+
+    ops = restart.Ops(
+        tmux=alerts.tmux_ops(),
+        agents=claude.agents,
+        stop=stop,
+        send=send,
+        command=lambda r, s: tmuxworker.command(r, resume=s, prompt=None)[0],
+    )
+    result = restart.restart(route, sid, ops, wait_idle=wait)
+    get_output().result({"session": session, "sid": sid, **result.as_dict()})
+    if not result.ok:
+        raise SystemExit(1)
