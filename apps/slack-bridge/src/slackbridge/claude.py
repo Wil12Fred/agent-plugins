@@ -643,11 +643,15 @@ def _row(
     title: str,
     project: str,
     pid: int | None,
+    name: str = "",
 ) -> dict[str, Any]:
     return {
         "engine": "claude",
         "sid": sid,
         "short": sid[:8],
+        # The session's own name (`claude --name`, `/rename`, or Claude's auto name), from
+        # `claude agents`: what other sessions address it by, e.g. ``support-worker``.
+        "name": shorten(name) if name else "",
         "status": status,
         "started": started,
         "title": shorten(title),
@@ -700,6 +704,7 @@ def list_sessions(
                 title=_title_for(sid, cwd, titles),
                 project=cwd,
                 pid=agent.get("pid"),
+                name=str(agent.get("name") or ""),
             )
         )
 

@@ -89,6 +89,10 @@ def session_card(row: dict[str, Any]) -> list[dict[str, Any]]:
     badge = "🟣 Codex" if row.get("engine") == "codex" else "🔵 Claude"
     project = (row.get("project") or "").rstrip("/").split("/")[-1] or "—"
     title = (row.get("title") or "(untitled)")[:140]
+    name = (row.get("name") or "").strip()[:60]
+    # The name says WHICH session (``support`` vs ``support-worker``); the title, what it
+    # is doing. Show both, but not twice when Claude's auto name is the title itself.
+    heading = f"*{name}*  ·  {title}" if name and name != title else f"*{title}*"
     live = bool(row.get("pid"))
     return [
         {
@@ -96,7 +100,7 @@ def session_card(row: dict[str, Any]) -> list[dict[str, Any]]:
             "text": {
                 "type": "mrkdwn",
                 "text": (
-                    f"{emoji} *{title}*\n{badge}  ·  `{short}`  ·  {row.get('status', '?')}  ·  "
+                    f"{emoji} {heading}\n{badge}  ·  `{short}`  ·  {row.get('status', '?')}  ·  "
                     f"{row.get('started', '?')}  ·  _{project}_"
                 ),
             },

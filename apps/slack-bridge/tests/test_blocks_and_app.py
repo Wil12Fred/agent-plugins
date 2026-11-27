@@ -53,6 +53,68 @@ class TestBlocks:
         assert "sess_stop" not in ids
         assert "sess_continue" in ids
 
+    @staticmethod
+    def _heading(row: dict[str, Any]) -> str:
+        text = session_card(row)[0]["text"]["text"]
+        return str(text).split("\n", 1)[0]
+
+    def test_card_names_the_session_so_two_alike_sessions_can_be_told_apart(self) -> None:
+        """Rule: a named session shows its name in bold before the title."""
+        row = {
+            "sid": "abc12345-x",
+            "short": "abc12345",
+            "status": "busy",
+            "pid": 42,
+            "name": "support-worker",
+            "title": "[Pasted text #1]",
+        }
+        assert self._heading(row) == "🟠 *support-worker*  ·  [Pasted text #1]"
+
+    def test_card_does_not_repeat_an_auto_name_equal_to_the_title(self) -> None:
+        """Rule: when the name is the title (Claude's auto name), it is shown once."""
+        row = {
+            "sid": "abc12345-x",
+            "short": "abc12345",
+            "status": "idle",
+            "pid": 42,
+            "name": "Pantalla oscura",
+            "title": "Pantalla oscura",
+        }
+        assert self._heading(row) == "🟢 *Pantalla oscura*"
+
+    def test_card_without_a_name_keeps_the_title_heading(self) -> None:
+        """Rule: closed sessions carry no name; the card looks as it did before."""
+        row = {
+            "sid": "abc12345-x",
+            "short": "abc12345",
+            "status": "idle",
+            "pid": None,
+            "title": "Estado de V",
+        }
+        assert self._heading(row) == "🟢 *Estado de V*"
+
+    def test_list_sessions_carries_the_name_claude_agents_reports(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Rule: the live row's name comes from `claude agents`, not from the title."""
+        from slackbridge import claude
+
+        agent = {
+            "pid": 1156,
+            "kind": "interactive",
+            "status": "busy",
+            "name": "support-worker",
+            "sessionId": "61ffed4b-81db-43e4-882d-c4b7846cae80",
+            "cwd": "/nowhere",
+            "startedAt": 0,
+        }
+        monkeypatch.setattr(claude, "agents", lambda: [agent])
+        monkeypatch.setattr(claude, "history_titles", dict)
+        rows = claude.list_sessions(
+            project=__import__("pathlib").Path("/nowhere"), include_closed=False
+        )
+        assert [r["name"] for r in rows] == ["support-worker"]
+
     def test_refresh_button_carries_the_filter_so_a_refresh_reproduces_the_view(self) -> None:
         blocks = sessions_blocks([], {"all": True, "live": False, "query": "payments"})
         footer = next(b for b in blocks if b.get("block_id") == "sess_footer")
