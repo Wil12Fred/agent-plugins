@@ -53,7 +53,7 @@ Recommended local override:
 ```ini
 [Desktop Entry]
 Name=Slack
-StartupWMClass=Slack
+StartupWMClass=slack
 Comment=Slack Desktop
 GenericName=Slack Client for Linux
 Exec=/usr/bin/slack --ozone-platform=x11 %U
@@ -132,3 +132,10 @@ Observed working end state for this machine:
 Result:
 - popup notification click worked
 - `Notifications History > View` also worked after reopening Slack on the updated X11 launcher
+
+## When only some clicks work (2026-11-27)
+
+The launcher fix above makes clicks reach Slack. It does not stop Slack itself
+from dropping the handler of some notifications. If clicks still fail
+intermittently with the launcher correct, see `SKILL.md` §7 and
+`scripts/slack-notif-click.md`.

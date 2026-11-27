@@ -1,0 +1,219 @@
+#!/usr/bin/env python3
+"""Make Slack desktop notification clicks always land on KDE Plasma.
+
+Slack (closed-source Electron) sometimes drops the click handler of a
+notification that is still visible in Plasma (GC'd Notification object, or
+Slack only keeping the newest per conversation). Plasma still emits
+ActionInvoked, but Slack never logs CLICK_NOTIFICATION and nothing happens.
+
+This helper watches:
+  * D-Bus: Slack's Notify calls, their reply (the Plasma notification id) and
+    the ActionInvoked signal.
+  * Slack's own log (browser.log): "Store: NEW_NOTIFICATION {json}" gives
+    teamId/channel/msg/thread_ts; "Store: CLICK_NOTIFICATION" proves Slack
+    handled a click.
+If Slack does not log the click within GRACE seconds, it opens the deep link
+slack://channel/?team=..&id=..&message=..[&thread_ts=..] itself.
+
+Stdlib only. Depends on Slack's internal log strings: a Slack update may
+break the log pairing (it then degrades to just raising Slack).
+"""
+import collections
+import json
+import os
+import subprocess
+import sys
+import threading
+import time
+import urllib.parse
+
+LOG_DIR = os.path.expanduser("~/.config/Slack/logs/default")
+LOG = os.path.join(LOG_DIR, "browser.log")
+GRACE = float(os.environ.get("SLACK_NOTIF_GRACE", "0.5"))  # Slack logs a handled click within ~1 ms
+PAIR_WINDOW = 3.0  # seconds between Notify on D-Bus and NEW_NOTIFICATION in log
+DRY_RUN = os.environ.get("SLACK_NOTIF_DRY_RUN") == "1"
+
+lock = threading.Lock()
+pending_logs = collections.deque()   # (t, data) NEW_NOTIFICATION not yet paired
+pending_ids = collections.deque()    # (t, plasma_id) Slack Notify replies not yet paired
+by_plasma_id = {}                    # plasma_id -> data (or None if unpaired)
+clicks = {}                          # slack notification id -> time Slack logged the click
+calls = {}                           # (sender, cookie) -> t of a Slack Notify call
+last_team = [None]                   # teamId of the newest notification, for the fallback
+
+
+def log(*a):
+    print(*a, flush=True)
+
+
+def prune(now):
+    for dq in (pending_logs, pending_ids):
+        while dq and now - dq[0][0] > PAIR_WINDOW:
+            dq.popleft()
+    if len(by_plasma_id) > 500:
+        for k in list(by_plasma_id)[:250]:
+            del by_plasma_id[k]
+    if len(clicks) > 500:
+        for k in list(clicks)[:250]:
+            del clicks[k]
+
+
+def pair():
+    """FIFO pairing of D-Bus ids with log entries that arrived close together."""
+    while pending_logs and pending_ids:
+        tl, data = pending_logs[0]
+        ti, pid = pending_ids[0]
+        if abs(tl - ti) <= PAIR_WINDOW:
+            pending_logs.popleft()
+            pending_ids.popleft()
+            by_plasma_id[pid] = data
+            log(f"paired plasma#{pid} -> {data.get('id')}")
+        elif tl < ti:
+            pending_logs.popleft()
+        else:
+            pending_ids.popleft()
+
+
+# ---------------------------------------------------------------- Slack log --
+def tail_log():
+    f, ino = None, None
+    while True:
+        try:
+            st = os.stat(LOG)
+            if f is None or st.st_ino != ino or st.st_size < f.tell():
+                if f:
+                    f.close()
+                f = open(LOG, errors="replace")  # noqa: SIM115 - kept open across reads, reopened on rotation
+                if ino is None:
+                    f.seek(0, os.SEEK_END)  # first open: only new lines
+                ino = st.st_ino
+        except FileNotFoundError:
+            time.sleep(1)
+            continue
+        line = f.readline()
+        if not line:
+            time.sleep(0.15)
+            continue
+        line = line.rstrip("\n")
+        if "Store: NEW_NOTIFICATION" in line:
+            data = read_json_block(f)
+            if data and data.get("channel") and data.get("teamId"):
+                with lock:
+                    now = time.time()
+                    pending_logs.append((now, data))
+                    last_team[0] = data["teamId"]
+                    prune(now)
+                    pair()
+        elif "Store: CLICK_NOTIFICATION" in line:
+            data = read_json_block(f)
+            if data and data.get("notificationId"):
+                with lock:
+                    clicks[data["notificationId"]] = time.time()
+                log(f"slack handled click {data['notificationId']}")
+
+
+def read_json_block(f):
+    buf = []
+    deadline = time.time() + 2
+    while time.time() < deadline:
+        line = f.readline()
+        if not line:
+            time.sleep(0.05)
+            continue
+        buf.append(line)
+        if line.rstrip("\n") == "}":
+            try:
+                return json.loads("".join(buf))
+            except ValueError:
+                return None
+        if len(buf) > 400:
+            break
+    return None
+
+
+# ------------------------------------------------------------------- D-Bus --
+def open_target(pid, click_t):
+    time.sleep(GRACE)
+    with lock:
+        data = by_plasma_id.get(pid)
+        handled = data and clicks.get(data.get("id"), 0) >= click_t - 0.5
+    if handled:
+        return
+    if data:
+        q = {"team": data["teamId"], "id": data["channel"]}
+        if data.get("msg"):
+            q["message"] = data["msg"]
+        if data.get("thread_ts"):
+            q["thread_ts"] = data["thread_ts"]
+        # The trailing slash matters: Slack 4.51 parses the command from the path and
+        # logs "Missing command" for the documented slack://channel?... form.
+        url = "slack://channel/?" + urllib.parse.urlencode(q)
+        log(f"slack ignored click on plasma#{pid}; opening {url}")
+        # Not xdg-open: on KDE it rewrites the URL and Slack loses the command.
+        cmd = ["/usr/bin/slack", url]
+    else:
+        log(f"slack ignored click on untracked plasma#{pid}; raising Slack")
+        team = last_team[0]
+        cmd = ["/usr/bin/slack", f"slack://open?team={team}" if team else "slack://open?"]
+    if not DRY_RUN:
+        subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                         start_new_session=True)
+
+
+def raise_slack():
+    """Step 1: bring the window up at once; routing to the message comes after."""
+    if not DRY_RUN:
+        subprocess.Popen(["wmctrl", "-x", "-a", "slack.slack"],
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def handle(msg):
+    t = msg.get("type")
+    payload = (msg.get("payload") or {}).get("data") or []
+    now = time.time()
+    if t == "method_call" and msg.get("member") == "Notify":
+        if payload and payload[0] == "Slack":
+            with lock:
+                calls[(msg.get("sender"), msg.get("cookie"))] = now
+                if len(calls) > 200:
+                    calls.clear()
+    elif t == "method_return":
+        key = (msg.get("destination"), msg.get("reply_cookie"))
+        with lock:
+            if key in calls and payload:
+                calls.pop(key)
+                pid = payload[0]
+                by_plasma_id.setdefault(pid, None)
+                pending_ids.append((now, pid))
+                prune(now)
+                pair()
+    elif t == "signal" and msg.get("member") == "ActionInvoked":
+        pid, action = (payload + [None, None])[:2]
+        with lock:
+            ours = pid in by_plasma_id
+        if ours and action == "default":
+            raise_slack()
+            threading.Thread(target=open_target, args=(pid, now), daemon=True).start()
+
+
+def main():
+    threading.Thread(target=tail_log, daemon=True).start()
+    cmd = ["busctl", "--user", "monitor", "--json=short",
+           "--match=type='method_call',interface='org.freedesktop.Notifications',member='Notify'",
+           "--match=type='method_return'",
+           "--match=type='signal',interface='org.freedesktop.Notifications',member='ActionInvoked'"]
+    log(f"slack-notif-click started (grace={GRACE}s, dry_run={DRY_RUN})")
+    p = subprocess.Popen(cmd, stdout=subprocess.PIPE, text=True, bufsize=1)
+    for line in p.stdout:
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            handle(json.loads(line))
+        except Exception as e:  # never die on one odd message
+            log("error:", e)
+    sys.exit(p.wait() or 1)
+
+
+if __name__ == "__main__":
+    main()

@@ -1,6 +1,6 @@
 ---
 name: linux-slack-kde-notifications
-description: Use when Slack desktop notifications stop opening/focusing correctly on Linux with KDE Plasma, especially after a Slack update. Focus on launcher normalization, X11 vs Wayland flags, KDE cache refresh, and popup vs history diagnosis.
+description: Use when Slack desktop notifications on Linux with KDE Plasma do not open or focus Slack when clicked, whether every click fails (launcher or X11 vs Wayland flags, KDE cache) or only some do (Slack swallows the click; the slack-notif-click user service rescues it). Covers popup vs history diagnosis with D-Bus and Slack's own logs. Not for Slack webhooks, the Slack API, or macOS/Windows.
 ---
 
 # Linux Slack KDE Notifications
@@ -37,7 +37,11 @@ Do not use this skill for Slack webhooks, Slack API integrations, or repository 
 - Prefer a single active local override at `~/.local/share/applications/slack.desktop`.
 - If Slack notification activation is broken after update, prefer:
   `Exec=/usr/bin/slack --ozone-platform=x11 %U`
-- Keep `StartupWMClass=Slack` and `MimeType=x-scheme-handler/slack;`.
+- Keep `MimeType=x-scheme-handler/slack;` and set `StartupWMClass` to the real
+  window class. Under XWayland that is `slack` in lowercase
+  (`xprop` on the window gives `WM_CLASS = "slack", "slack"`), not the `Slack`
+  in the system launcher. Slack's `Notify` hint is `desktop-entry: "slack"`, which
+  matches `slack.desktop`.
 
 3. Refresh KDE caches
 - Run `update-desktop-database ~/.local/share/applications`
@@ -77,6 +81,42 @@ Do not use this skill for Slack webhooks, Slack API integrations, or repository 
   and only renders it as a button in the history. A missing button in the popup
   is not a symptom.
 
+7. Only some clicks open Slack: rescue the swallowed ones
+- Symptom: the launcher and the x11 flag are correct, yet some notifications,
+  popup or history, do nothing or only raise the window.
+- Diagnose with Slack's own log, `~/.config/Slack/logs/default/browser.log`:
+  - each notification logs `Store: NEW_NOTIFICATION`, and each click Slack
+    handles logs `Store: CLICK_NOTIFICATION` within ~1 ms of Plasma's
+    `ActionInvoked`;
+  - a D-Bus `ActionInvoked "default"` with no `CLICK_NOTIFICATION` after it
+    means Plasma delivered the click and Slack dropped it.
+  - On 2026-11-27 one log held 47 notifications and 1 click.
+- Cause: Slack is closed-source Electron. Electron drops a notification's click
+  handler while the notification is still listed in Plasma. Its JS
+  `Notification` gets garbage-collected, and Slack seems to keep only the newest
+  notification per conversation clickable. Another open-source
+  Electron client fixed the same bug app-side in Oct 2026 by keeping a reference
+  to each live notification. Slack cannot be patched from here, and
+  no launcher flag changes it.
+  - Keep `--ozone-platform=x11`. Native Wayland swallowed every click on
+    2026-11-25.
+- Fix: install the `scripts/slack-notif-click` user service; its reference is
+  `scripts/slack-notif-click.md`. On a Slack click it raises Slack at once, and
+  if Slack logs no `CLICK_NOTIFICATION` within 0.5 s it opens the message's deep
+  link itself.
+- Deep-link traps, measured on Slack 4.51.191:
+  - use `slack://channel/?team=…&id=…&message=…`, because the documented form
+    without the `/` is dropped as `Missing command`;
+  - pass the link to `/usr/bin/slack` directly, because `xdg-open` on KDE
+    rewrites it into the same failure.
+- Verified 2026-11-27 on:
+  - Arch, kernel 6.18.65-lts, KDE Plasma/KWin 6.8.3 on Wayland, XWayland 24.1.15;
+  - `slack-desktop` 4.51.191 (Electron 43.4.0).
+  - On these versions, 3 of 3 swallowed clicks were rescued.
+  - The service is not needed on macOS or Windows.
+  - Re-check whether it is still needed after Slack updates (see "When to
+    remove it" in its doc).
+
 ## Known Good Fix
 
 For the case documented in this environment, the stable fix was:
@@ -89,6 +129,9 @@ For the case documented in this environment, the stable fix was:
 This resolved:
 - popup notifications not opening Slack
 - `Notifications History > View` not opening Slack
+
+It did not resolve *some* clicks still being swallowed by Slack itself. That
+needs §7, the `slack-notif-click` service, on top of the launcher fix.
 
 ## Exact File State
 
@@ -124,8 +167,11 @@ Include:
 - Whether duplicate desktop entries exist
 - Whether popup click works
 - Whether history `View` works
+- Whether `slack-notif-click` is active (`systemctl --user is-active slack-notif-click`)
+  and how many rescues its log shows
 - Final verification command output summary
 
 ## References
 
 - `references/slack-kde-notification-recovery.md`
+- `scripts/slack-notif-click.md`: the rescue service, its install, and when to remove it

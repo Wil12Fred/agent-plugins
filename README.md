@@ -324,7 +324,8 @@ Codex CLI, Gemini CLI and Cursor.
 about **this Arch/KDE machine** rather than about any project — recovering the
 network after a system update, pacman and wedged devices, enabling or disabling
 a USB webcam per-device when one will not start, why KDE stops opening Slack
-notifications after a Slack update, what breaks when the monitor cable moves from
+notifications after a Slack update (and a user service that rescues the clicks
+Slack itself swallows), what breaks when the monitor cable moves from
 one GPU to the other, and where a sound setting actually lives when the machine
 keeps forgetting it.
 
