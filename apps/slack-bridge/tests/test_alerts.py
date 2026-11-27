@@ -250,6 +250,17 @@ def test_listener_ignores_chatter_edits_and_bots(
     assert routed == []
 
 
+@pytest.mark.parametrize("subtype", ["file_share", "thread_broadcast"])
+def test_listener_routes_a_person_post_that_carries_a_subtype(
+    routed: list[alerts.AlertEvent], subtype: str
+) -> None:
+    """Rule: a message with attachments (file_share) or a thread reply also sent to the channel
+    (thread_broadcast) is a person writing; it must open an item like plain text does.
+    Regression: a CS question with five screenshots was dropped on 2026-11-27."""
+    _deliver({**top(ts("350.1"), ALERT_TEXT), "subtype": subtype}, alerts_config())
+    assert [e.kind for e in routed] == ["ALERT"]
+
+
 def test_listener_drops_a_redelivered_alert(routed: list[alerts.AlertEvent]) -> None:
     config = alerts_config()
     _deliver(top(ts("400.1"), ALERT_TEXT), config)

@@ -338,13 +338,20 @@ def is_own_post(event: dict[str, Any], config: SlackConfig) -> bool:
     return not user or (bool(config.bot_user_id) and user == config.bot_user_id)
 
 
+PERSON_SUBTYPES = frozenset({"file_share", "thread_broadcast"})
+"""Subtypes that are still a person writing. A message with attachments arrives as
+``file_share`` and a thread reply also sent to the channel as ``thread_broadcast``; dropping
+every subtype silently lost both (a CS question with five screenshots, 2026-11-27). Edits,
+joins, deletions and other system subtypes stay ignored."""
+
+
 def classify(event: dict[str, Any], config: SlackConfig, store: AlertStore) -> AlertEvent | None:
     """Turn a ``message`` event from the alerts channel into an :class:`AlertEvent`, or ignore.
 
     Pure apart from :meth:`AlertStore.admit`, which records a top-level item in the ledger
     and reports whether it was already there (``known``): no Slack call, no subprocess.
     """
-    if event.get("subtype"):
+    if event.get("subtype") not in (None, "", *PERSON_SUBTYPES):
         return None
     ts = event.get("ts", "")
     author = event.get("user", "")
