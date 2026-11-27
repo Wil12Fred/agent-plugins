@@ -82,8 +82,35 @@ def action_row(
     return {"type": "actions", "block_id": f"sess::{short}", "elements": elements}
 
 
+MENU_ACTION = "sess_menu"
+"""The ⋯ overflow on a listing card. Each option's value is ``<action>|<full session id>``;
+:mod:`slackbridge.listeners.actions` routes it to the same handler the old button used."""
+
+
+def session_menu(sid: str, *, live: bool, busy: bool) -> dict[str, Any]:
+    """One ⋯ menu instead of a row of five buttons (Slack allows at most 5 options).
+
+    ✗ Cerrar is only offered for a live session, ⏹ Stop only while it is busy — the same
+    rule the button row follows. Cerrar does not close from the menu: an overflow option
+    cannot carry its own confirm dialog, so the handler answers with a confirm button.
+    """
+    options = [("continue", "▶️ Continuar…"), ("last", "💬 Última"), ("compact", "🗜 Compact")]
+    if live and busy:
+        options.append(("stop", "⏹ Stop"))
+    if live:
+        options.append(("close", "🗙 Cerrar…"))
+    return {
+        "type": "overflow",
+        "action_id": MENU_ACTION,
+        "options": [
+            {"text": {"type": "plain_text", "text": label, "emoji": True}, "value": f"{key}|{sid}"}
+            for key, label in options
+        ],
+    }
+
+
 def session_card(row: dict[str, Any]) -> list[dict[str, Any]]:
-    """One session's section + action row."""
+    """One session's section, with its actions in a ⋯ menu on the right."""
     sid, short = row.get("sid", ""), row.get("short", "?")
     emoji = "🟠" if row.get("status") == "busy" else "🟢"
     badge = "🟣 Codex" if row.get("engine") == "codex" else "🔵 Claude"
@@ -97,6 +124,8 @@ def session_card(row: dict[str, Any]) -> list[dict[str, Any]]:
     return [
         {
             "type": "section",
+            # The section carries the card's unique block id (Slack rejects a repeated one).
+            "block_id": f"sess::{short}",
             "text": {
                 "type": "mrkdwn",
                 "text": (
@@ -104,13 +133,8 @@ def session_card(row: dict[str, Any]) -> list[dict[str, Any]]:
                     f"{row.get('started', '?')}  ·  _{project}_"
                 ),
             },
-        },
-        action_row(
-            sid,
-            short,
-            include_close=live,
-            include_stop=live and row.get("status") == "busy",
-        ),
+            "accessory": session_menu(sid, live=live, busy=row.get("status") == "busy"),
+        }
     ]
 
 

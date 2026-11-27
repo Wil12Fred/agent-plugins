@@ -21,7 +21,25 @@ def _action_ids(blocks: list[dict[str, Any]]) -> list[str]:
     ]
 
 
+def _menu_ids(blocks: list[dict[str, Any]]) -> list[str]:
+    """The card's ⋯ options, as the ``sess_<action>`` they route to."""
+    return [
+        "sess_" + option["value"].split("|", 1)[0]
+        for block in blocks
+        if (block.get("accessory") or {}).get("type") == "overflow"
+        for option in block["accessory"]["options"]
+    ]
+
+
 class TestBlocks:
+    def test_card_has_one_menu_and_no_button_row(self) -> None:
+        """Rule: a listing card is one section with a ⋯ menu — no row of five buttons."""
+        row = {"sid": "abc12345-x", "short": "abc12345", "status": "busy", "pid": 42}
+        blocks = session_card(row)
+        assert [b["type"] for b in blocks] == ["section"]
+        assert blocks[0]["accessory"]["action_id"] == "sess_menu"
+        assert all(o["value"].endswith("|abc12345-x") for o in blocks[0]["accessory"]["options"])
+
     def test_live_session_card_offers_close_and_stop(self) -> None:
         row = {
             "sid": "abc12345-x",
@@ -33,7 +51,7 @@ class TestBlocks:
             "project": "/p",
             "started": "01-01 10:00",
         }
-        ids = _action_ids(session_card(row))
+        ids = _menu_ids(session_card(row))
         assert "sess_close" in ids
         assert "sess_stop" in ids
 
@@ -48,7 +66,7 @@ class TestBlocks:
             "project": "",
             "started": "01-01 10:00",
         }
-        ids = _action_ids(session_card(row))
+        ids = _menu_ids(session_card(row))
         assert "sess_close" not in ids
         assert "sess_stop" not in ids
         assert "sess_continue" in ids
@@ -176,8 +194,8 @@ class TestBoltApp:
     ) -> None:
         app, config = build_app(make_config())
         assert config.channel_id == "C_TARGET"
-        # 3 slash commands + 8 button actions + 2 modals + 2 events (message, app_home_opened)
-        assert len(app._listeners) == 15
+        # 3 slash commands + 8 button actions + the ⋯ menu + 2 modals + 2 events
+        assert len(app._listeners) == 16
 
 
 def test_a_session_listed_twice_gets_one_card_and_unique_block_ids() -> None:
@@ -207,3 +225,99 @@ def test_block_ids_stay_unique_when_short_ids_collide() -> None:
     ]
     ids = [b["block_id"] for b in sessions_blocks(rows) if "block_id" in b]
     assert len(ids) == len(set(ids))
+
+
+class _FakeApp:
+    """Captures ``@app.action`` handlers so the menu can be driven without Slack."""
+
+    def __init__(self) -> None:
+        self.handlers: dict[str, Any] = {}
+
+    def action(self, action_id: str) -> Any:
+        def register(fn: Any) -> Any:
+            self.handlers[action_id] = fn
+            return fn
+
+        return register
+
+    def view(self, _callback_id: str) -> Any:
+        return lambda fn: fn
+
+
+def _menu_body(value: str) -> dict[str, Any]:
+    return {
+        "user": {"id": "U_HUMAN"},
+        "trigger_id": "T1",
+        "channel": {"id": "C_TARGET"},
+        "container": {"type": "message", "message_ts": "1.1", "channel_id": "C_TARGET"},
+        "message": {"ts": "1.1"},
+        "actions": [{"action_id": "sess_menu", "selected_option": {"value": value}}],
+    }
+
+
+def _drive_menu(monkeypatch: pytest.MonkeyPatch, value: str) -> dict[str, Any]:
+    from conftest import HUMAN
+
+    from slackbridge.listeners import actions
+
+    seen: dict[str, Any] = {"dispatch": [], "stop": [], "respond": [], "modal": []}
+    monkeypatch.setattr(actions, "_bg", lambda fn: fn())
+    monkeypatch.setattr(
+        actions.sessions, "dispatch", lambda arg: seen["dispatch"].append(arg) or "ok"
+    )
+    monkeypatch.setattr(actions.sessions, "stop", lambda sid: seen["stop"].append(sid) or "ok")
+
+    class Client:
+        def chat_postMessage(self, **_k: Any) -> dict[str, str]:
+            return {"ts": "2.2"}
+
+        def chat_update(self, **_k: Any) -> None:
+            return None
+
+        def views_open(self, **k: Any) -> None:
+            seen["modal"].append(k["view"]["callback_id"])
+
+    app = _FakeApp()
+    actions.register(app, make_config())  # type: ignore[arg-type]
+    body = _menu_body(value)
+    body["user"]["id"] = HUMAN
+    app.handlers["sess_menu"](
+        ack=lambda: None,
+        body=body,
+        client=Client(),
+        respond=lambda payload: seen["respond"].append(payload),
+        logger=__import__("logging").getLogger("t"),
+    )
+    return seen
+
+
+SID = "29d4e18e-17ea-4c7d-a7ab-ad2c0b98c6ed"
+
+
+def test_menu_routes_last_and_stop_to_their_handlers(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Rule: a ⋯ option does what its old button did, on the full session id."""
+    assert _drive_menu(monkeypatch, f"last|{SID}")["dispatch"] == [SID]
+    assert _drive_menu(monkeypatch, f"stop|{SID}")["stop"] == [SID]
+
+
+def test_menu_continue_opens_the_instruction_modal(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Rule: ▶️ Continuar from the menu opens the same modal as the button."""
+    assert _drive_menu(monkeypatch, f"continue|{SID}")["modal"] == ["continue_modal"]
+
+
+def test_menu_close_asks_for_confirmation_and_closes_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Rule: an overflow option has no confirm dialog, so Cerrar answers with the confirmed
+    ✗ Cerrar button (ephemeral) and does not terminate anything by itself."""
+    from slackbridge.listeners import actions
+
+    closed: list[str] = []
+    monkeypatch.setattr(actions.sessions, "close", lambda sid: closed.append(sid) or "ok")
+    seen = _drive_menu(monkeypatch, f"close|{SID}")
+    assert closed == []
+    (payload,) = seen["respond"]
+    assert payload["response_type"] == "ephemeral"
+    buttons = [e for b in payload["blocks"] if b["type"] == "actions" for e in b["elements"]]
+    assert [b["action_id"] for b in buttons] == ["sess_close"]
+    assert buttons[0]["value"] == SID and "confirm" in buttons[0]

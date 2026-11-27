@@ -5,6 +5,8 @@
 ``sess_stop``      interrupt the current generation (ESC)
 ``sess_close``     terminate the session's process (confirmed in the button dialog)
 ``sess_compact``   send ``/compact`` — live sessions only
+``sess_menu``      the ⋯ overflow on a listing card: routes ``<action>|<sid>`` to the handler
+                   above; ``close`` answers with a confirm button instead of closing
 ``sess_new``       modal to create a new session
 ``sess_refresh``   re-render the list with the SAME filter the button carries
 ``sess_refresh_continue``  re-check a running instruction (busy -> Stop, idle -> Última)
@@ -30,7 +32,15 @@ from slack_sdk import WebClient
 
 from slackbridge import sessions
 from slackbridge.access import is_allowed
-from slackbridge.blocks import NOTIFY_CAP, home_view, pending_blocks, result_blocks, sessions_blocks
+from slackbridge.blocks import (
+    MENU_ACTION,
+    NOTIFY_CAP,
+    action_row,
+    home_view,
+    pending_blocks,
+    result_blocks,
+    sessions_blocks,
+)
 from slackbridge.config import SlackConfig
 
 
@@ -120,10 +130,23 @@ def _run_with_feedback(
         logger.error("chat_update failed: %s", exc)
 
 
+def _noop_ack(*_args: Any, **_kwargs: Any) -> None:
+    """The menu handler already acked; the routed handler's own ack() must be harmless."""
+
+
 def register(app: App, config: SlackConfig) -> None:
     """Register every ``sess_*`` button handler."""
+    menu: dict[str, Callable[..., None]] = {}
+
+    def menu_item(key: str) -> Callable[[Callable[..., None]], Callable[..., None]]:
+        def store(fn: Callable[..., None]) -> Callable[..., None]:
+            menu[key] = fn
+            return fn
+
+        return store
 
     @app.action("sess_continue")
+    @menu_item("continue")
     def _continue(ack: Ack, body: dict[str, Any], client: WebClient, logger: Logger) -> None:
         ack()
         if not is_allowed(config, _user(body)):
@@ -164,6 +187,7 @@ def register(app: App, config: SlackConfig) -> None:
             logger.error("views_open failed: %s", exc)
 
     @app.action("sess_last")
+    @menu_item("last")
     def _last(ack: Ack, body: dict[str, Any], client: WebClient, logger: Logger) -> None:
         ack()
         if not is_allowed(config, _user(body)):
@@ -177,6 +201,7 @@ def register(app: App, config: SlackConfig) -> None:
         )
 
     @app.action("sess_stop")
+    @menu_item("stop")
     def _stop(ack: Ack, body: dict[str, Any], client: WebClient, logger: Logger) -> None:
         ack()
         if not is_allowed(config, _user(body)):
@@ -190,6 +215,7 @@ def register(app: App, config: SlackConfig) -> None:
         )
 
     @app.action("sess_compact")
+    @menu_item("compact")
     def _compact(ack: Ack, body: dict[str, Any], client: WebClient, logger: Logger) -> None:
         ack()
         if not is_allowed(config, _user(body)):
@@ -265,6 +291,50 @@ def register(app: App, config: SlackConfig) -> None:
                 logger.error("close respond failed: %s", exc)
 
         _bg(work)
+
+    @app.action(MENU_ACTION)
+    def _menu(
+        ack: Ack, body: dict[str, Any], client: WebClient, respond: Respond, logger: Logger
+    ) -> None:
+        ack()
+        if not is_allowed(config, _user(body)):
+            return
+        selected = ((body.get("actions") or [{}])[0].get("selected_option") or {}).get("value", "")
+        key, _, sid = str(selected).partition("|")
+        if not sid:
+            return
+        if key == "close":
+            # An overflow option has no confirm dialog of its own; hand back the old
+            # confirmed ✗ Cerrar button rather than closing on a single mis-click.
+            short = sid[:8]
+            row = action_row(sid, short, include_last=False)
+            row["elements"] = [e for e in row["elements"] if e["action_id"] == "sess_close"]
+            row["block_id"] = f"sess_close_confirm::{short}"
+            try:
+                respond(
+                    {
+                        "response_type": "ephemeral",
+                        "replace_original": False,
+                        "text": f"¿Cerrar `{short}`?",
+                        "blocks": [
+                            {
+                                "type": "section",
+                                "text": {"type": "mrkdwn", "text": f"¿Cerrar la sesión `{short}`?"},
+                            },
+                            row,
+                        ],
+                    }
+                )
+            except Exception as exc:
+                logger.error("close confirm failed: %s", exc)
+            return
+        handler = menu.get(key)
+        if handler is None:
+            logger.error("sess_menu: unknown action %r", key)
+            return
+        routed = dict(body)
+        routed["actions"] = [{"value": sid}]
+        handler(ack=_noop_ack, body=routed, client=client, logger=logger)
 
     @app.action("sess_new")
     def _new(ack: Ack, body: dict[str, Any], client: WebClient, logger: Logger) -> None:
